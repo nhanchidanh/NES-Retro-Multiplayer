@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Guest - NES Retro Multiplayer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Guest Controller</h1>
+        <p>Send only key input to the host. No emulator or ROM required.</p>
+      </header>
+
+      <section class="panel">
+        <div class="status">
+          <span class="pill" id="ws-status">WS: connecting...</span>
+          <span class="pill" id="host-status">Host: unknown</span>
+        </div>
+
+        <div class="controls">
+          <span>Keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
+          <span>Keep this page focused while playing.</span>
+        </div>
+      </section>
+    </div>
+
+    <script src="guest.js" defer></script>
+  </body>
+</html>

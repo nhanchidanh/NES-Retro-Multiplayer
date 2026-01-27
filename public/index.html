@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NES Retro Multiplayer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>NES Retro Multiplayer</h1>
+        <p>
+          Host runs the emulator and renders the game. Guest sends only key input
+          over a raw WebSocket. No ROMs are uploaded to the server.
+        </p>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <h3>Host (Player 1)</h3>
+          <p>Run the emulator, load a ROM from your machine, and receive Player 2 input.</p>
+          <a class="button" href="host.html">Open Host</a>
+        </article>
+        <article class="card">
+          <h3>Guest (Player 2)</h3>
+          <p>Use your keyboard as the second controller. No emulator needed.</p>
+          <a class="button" href="guest.html">Open Guest</a>
+        </article>
+      </section>
+
+      <footer>
+        <p>Tip: share the host server address with the guest (same URL, /guest.html).</p>
+      </footer>
+    </div>
+  </body>
+</html>

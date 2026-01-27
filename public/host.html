@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Host - NES Retro Multiplayer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Host Console</h1>
+        <p>Load a .nes ROM locally, play with Player 1 keyboard, and relay Player 2 input.</p>
+      </header>
+
+      <section class="panel">
+        <div class="status">
+          <span class="pill" id="ws-status">WS: connecting...</span>
+          <span class="pill" id="guest-status">Guest: waiting</span>
+          <span class="pill" id="rom-status">ROM: none</span>
+        </div>
+
+        <div class="controls">
+          <label for="rom-input">Local ROM (.nes)</label>
+          <input id="rom-input" type="file" accept=".nes" />
+          <span>Player 1 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
+          <span>Player 2 keys: same mapping from guest page.</span>
+        </div>
+
+        <div class="screen-wrap">
+          <canvas id="screen" width="256" height="240"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://unpkg.com/jsnes/dist/jsnes.min.js"></script>
+    <script src="host.js" defer></script>
+  </body>
+</html>
