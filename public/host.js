@@ -8,6 +8,9 @@
   const ctx = canvas.getContext("2d", { alpha: false });
   const peerIdEl = document.querySelector("#peer-id");
   const copyIdBtn = document.querySelector("#copy-id");
+  const controlButtons = Array.from(document.querySelectorAll(".host-overlay [data-btn]"));
+  const videoFrame = document.querySelector("#video-frame");
+  const fullscreenBtn = document.querySelector("#fullscreen-btn");
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -48,7 +51,7 @@
   let dataConn = null;
   let mediaCall = null;
   let canvasStream = null;
-  const localPressed = new Set();
+  const localSources = new Map();
   const remotePressed = new Set();
 
   function setPill(el, text, warn = false) {
@@ -104,17 +107,36 @@
     });
   }
 
+  function updateLocalButton(btnName, source, pressed) {
+    if (!nes) return;
+    const nesBtn = NES_BUTTONS[btnName];
+    if (nesBtn === undefined) return;
+    const sources = localSources.get(btnName) || new Set();
+    const wasPressed = sources.size > 0;
+    if (pressed) {
+      sources.add(source);
+    } else {
+      sources.delete(source);
+    }
+    if (sources.size === 0) {
+      localSources.delete(btnName);
+    } else {
+      localSources.set(btnName, sources);
+    }
+    const isPressed = sources.size > 0;
+    if (wasPressed !== isPressed) {
+      if (isPressed) {
+        nes.buttonDown(1, nesBtn);
+      } else {
+        nes.buttonUp(1, nesBtn);
+      }
+    }
+  }
+
   function applyLocalInput(code, pressed) {
     const btnName = KEY_MAP[code];
-    if (!btnName || !nes) return;
-    const nesBtn = NES_BUTTONS[btnName];
-    if (pressed) {
-      nes.buttonDown(1, nesBtn);
-      localPressed.add(code);
-    } else {
-      nes.buttonUp(1, nesBtn);
-      localPressed.delete(code);
-    }
+    if (!btnName) return;
+    updateLocalButton(btnName, "keyboard", pressed);
   }
 
   function applyRemoteInput(btnName, pressed) {
@@ -141,13 +163,12 @@
   }
 
   function releaseAllLocal() {
-    for (const code of localPressed) {
-      const btnName = KEY_MAP[code];
-      if (!btnName || !nes) continue;
+    for (const btnName of localSources.keys()) {
       const nesBtn = NES_BUTTONS[btnName];
-      nes.buttonUp(1, nesBtn);
+      if (nesBtn !== undefined && nes) nes.buttonUp(1, nesBtn);
     }
-    localPressed.clear();
+    localSources.clear();
+    controlButtons.forEach((btn) => btn.classList.remove("active"));
   }
 
   function ensureCanvasStream() {
@@ -302,6 +323,62 @@
 
   window.addEventListener("blur", () => {
     releaseAllLocal();
+  });
+
+  function updateFullscreenButton() {
+    if (!fullscreenBtn || !videoFrame) return;
+    const isFull = document.fullscreenElement === videoFrame;
+    fullscreenBtn.textContent = isFull ? "Exit Fullscreen" : "Fullscreen";
+  }
+
+  async function toggleFullscreen() {
+    if (!videoFrame || !videoFrame.requestFullscreen) return;
+    try {
+      if (document.fullscreenElement === videoFrame) {
+        await document.exitFullscreen();
+      } else {
+        await videoFrame.requestFullscreen({ navigationUI: "hide" });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  if (fullscreenBtn) {
+    const canFullscreen = !!(videoFrame && videoFrame.requestFullscreen);
+    fullscreenBtn.disabled = !canFullscreen;
+    if (!canFullscreen) {
+      fullscreenBtn.textContent = "Fullscreen (unsupported)";
+    } else {
+      fullscreenBtn.addEventListener("click", () => {
+        if (navigator.vibrate) navigator.vibrate(10);
+        toggleFullscreen();
+      });
+      document.addEventListener("fullscreenchange", updateFullscreenButton);
+      updateFullscreenButton();
+    }
+  }
+
+  controlButtons.forEach((button) => {
+    const btn = button.dataset.btn;
+    const press = () => {
+      button.classList.add("active");
+      updateLocalButton(btn, "touch", true);
+      if (navigator.vibrate) navigator.vibrate(10);
+    };
+    const release = () => {
+      button.classList.remove("active");
+      updateLocalButton(btn, "touch", false);
+    };
+
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      press();
+    });
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("pointerleave", release);
   });
 
   romInput.addEventListener("change", async (event) => {

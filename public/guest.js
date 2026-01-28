@@ -5,6 +5,8 @@
   const hostIdInput = document.querySelector("#host-id");
   const connectBtn = document.querySelector("#connect-btn");
   const video = document.querySelector("#screen");
+  const videoFrame = document.querySelector("#video-frame");
+  const fullscreenBtn = document.querySelector("#fullscreen-btn");
   const controlButtons = Array.from(document.querySelectorAll("[data-btn]"));
 
   const STUN_SERVERS = [
@@ -41,6 +43,8 @@
   let dataConn = null;
   let mediaCall = null;
   let gamepadIndex = null;
+  let wakeLock = null;
+  let wantsWakeLock = false;
   const gamepadButtons = {};
   const axisState = { left: false, right: false, up: false, down: false };
   const pressedSources = new Map();
@@ -57,6 +61,46 @@
   function sendInput(btn, pressedState) {
     if (!dataConn || !dataConn.open) return;
     dataConn.send({ type: "input", btn, pressed: pressedState });
+  }
+
+  function haptic(pattern = 15) {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  }
+
+  async function requestWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => {
+        wakeLock = null;
+      });
+    } catch {
+      // Ignore wake lock errors (not supported or denied).
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) {
+      wakeLock.release();
+      wakeLock = null;
+    }
+  }
+
+  function setWakeLockEnabled(enabled) {
+    wantsWakeLock = enabled;
+    if (enabled) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  }
+
+  function shouldHoldWakeLock() {
+    return (dataConn && dataConn.open) || document.fullscreenElement === videoFrame;
+  }
+
+  function refreshWakeLock() {
+    setWakeLockEnabled(shouldHoldWakeLock());
   }
 
   function updateButton(btn, source, pressed) {
@@ -133,10 +177,12 @@
     call.on("stream", (stream) => {
       video.srcObject = stream;
       setPill(streamStatus, "Stream: live");
+      refreshWakeLock();
     });
     call.on("close", () => {
       setPill(streamStatus, "Stream: closed", true);
       video.srcObject = null;
+      refreshWakeLock();
     });
     call.on("error", (err) => {
       setPill(streamStatus, "Stream: error", true);
@@ -187,6 +233,7 @@
     dataConn.on("open", () => {
       setPill(hostStatus, `Host: ${hostId}`);
       syncPressed();
+      refreshWakeLock();
     });
 
     dataConn.on("data", (msg) => {
@@ -200,6 +247,7 @@
       setPill(streamStatus, "Stream: idle", true);
       releaseAll();
       cleanupMedia();
+      refreshWakeLock();
     });
 
     dataConn.on("error", (err) => {
@@ -228,7 +276,12 @@
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) releaseAll();
+    if (document.hidden) {
+      releaseAll();
+      releaseWakeLock();
+      return;
+    }
+    if (wantsWakeLock) requestWakeLock();
   });
 
   controlButtons.forEach((button) => {
@@ -236,6 +289,7 @@
     const press = () => {
       button.classList.add("active");
       updateButton(btn, "touch", true);
+      haptic(12);
     };
     const release = () => {
       button.classList.remove("active");
@@ -309,7 +363,43 @@
     gamepadIndex = null;
   });
 
+  function handleFullscreenChange() {
+    if (!fullscreenBtn || !videoFrame) return;
+    const isFull = document.fullscreenElement === videoFrame;
+    fullscreenBtn.textContent = isFull ? "Exit Fullscreen" : "Fullscreen";
+    refreshWakeLock();
+  }
+
+  async function toggleFullscreen() {
+    if (!videoFrame || !videoFrame.requestFullscreen) return;
+    try {
+      if (document.fullscreenElement === videoFrame) {
+        await document.exitFullscreen();
+      } else {
+        await videoFrame.requestFullscreen({ navigationUI: "hide" });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  if (fullscreenBtn) {
+    const canFullscreen = !!(videoFrame && videoFrame.requestFullscreen);
+    fullscreenBtn.disabled = !canFullscreen;
+    if (!canFullscreen) {
+      fullscreenBtn.textContent = "Fullscreen (unsupported)";
+    } else {
+      fullscreenBtn.addEventListener("click", () => {
+        haptic(10);
+        toggleFullscreen();
+      });
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+      handleFullscreenChange();
+    }
+  }
+
   connectBtn.addEventListener("click", () => {
+    haptic(10);
     connectToHost();
   });
 

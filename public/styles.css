@@ -213,22 +213,18 @@ input[type="text"] {
 }
 
 canvas {
-  width: min(768px, 100%);
-  height: auto;
-  aspect-ratio: 256 / 240;
+  display: block;
   image-rendering: pixelated;
-  border-radius: 12px;
-  border: 2px solid rgba(244, 197, 66, 0.35);
   background: #000;
 }
 
 video {
-  width: min(768px, 100%);
-  height: auto;
-  aspect-ratio: 256 / 240;
+  width: 100%;
+  height: 100%;
   border-radius: 12px;
-  border: 2px solid rgba(244, 197, 66, 0.35);
   background: #000;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .controls {
@@ -268,12 +264,78 @@ video {
   align-items: center;
 }
 
-.touch-controls {
+.video-frame {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 256 / 240;
+  border-radius: 14px;
+  border: 2px solid rgba(244, 197, 66, 0.35);
+  overflow: hidden;
+  background: #000;
   display: grid;
-  gap: 24px;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  align-items: center;
-  justify-items: center;
+  place-items: center;
+}
+
+.video-frame video,
+.video-frame canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  border: none;
+  background: #000;
+}
+
+.video-frame canvas {
+  image-rendering: pixelated;
+}
+
+.video-frame:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.video-frame:fullscreen video {
+  border-radius: 0;
+}
+
+.video-frame:fullscreen canvas {
+  border-radius: 0;
+}
+
+.video-frame:fullscreen .touch-overlay {
+  padding: 24px;
+}
+
+.video-frame:fullscreen video,
+.video-frame:fullscreen canvas {
+  width: min(100vw, calc(100vh * 256 / 240));
+  height: min(100vh, calc(100vw * 240 / 256));
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.touch-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+
+.fullscreen-btn {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  pointer-events: auto;
 }
 
 .dpad {
@@ -326,6 +388,7 @@ video {
   cursor: pointer;
   user-select: none;
   touch-action: none;
+  pointer-events: auto;
 }
 
 .control.small {
@@ -368,8 +431,48 @@ footer {
     font-size: 20px;
   }
 
+  .touch-overlay {
+    display: flex;
+  }
+
   .dpad {
     grid-template-columns: repeat(3, 52px);
     grid-template-rows: repeat(3, 52px);
+  }
+
+  .touch-overlay {
+    padding: 12px;
+  }
+
+  .control {
+    min-width: 52px;
+    padding: 14px;
+  }
+
+  .control.action {
+    min-width: 72px;
+    padding: 14px 18px;
+  }
+
+  .control.small {
+    min-width: 72px;
+  }
+}
+
+@media (max-width: 560px) {
+  .touch-overlay {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .actions {
+    align-items: center;
+  }
+}
+
+@media (max-height: 520px) {
+  .touch-overlay {
+    display: flex;
   }
 }

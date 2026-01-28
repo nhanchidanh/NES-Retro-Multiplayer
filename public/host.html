@@ -38,7 +38,30 @@
         </div>
 
         <div class="screen-wrap">
-          <canvas id="screen" width="256" height="240"></canvas>
+          <div class="video-frame" id="video-frame">
+            <canvas id="screen" width="256" height="240"></canvas>
+            <button class="button secondary fullscreen-btn" id="fullscreen-btn" type="button">
+              Fullscreen
+            </button>
+            <div class="touch-overlay host-overlay">
+              <div class="dpad">
+                <button class="control up" data-btn="UP" type="button">▲</button>
+                <button class="control left" data-btn="LEFT" type="button">◀</button>
+                <button class="control right" data-btn="RIGHT" type="button">▶</button>
+                <button class="control down" data-btn="DOWN" type="button">▼</button>
+              </div>
+              <div class="actions">
+                <div class="action-row">
+                  <button class="control action" data-btn="B" type="button">B</button>
+                  <button class="control action" data-btn="A" type="button">A</button>
+                </div>
+                <div class="action-row">
+                  <button class="control small" data-btn="SELECT" type="button">Select</button>
+                  <button class="control small" data-btn="START" type="button">Start</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </div>
