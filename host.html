@@ -1,38 +1,29 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Host - NES Retro Multiplayer</title>
+    <title>Host - NES Netplay</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="wrap">
       <header>
         <h1>Host Console</h1>
-        <p>Run jsnes locally, stream the canvas via WebRTC, and receive Player 2 input in real time.</p>
+        <p>Lockstep netplay: both sides run jsnes locally and only sync inputs.</p>
       </header>
 
       <section class="panel">
         <div class="status">
           <span class="pill" id="peer-status">Peer: connecting...</span>
           <span class="pill" id="guest-status">Guest: waiting</span>
-          <span class="pill" id="stream-status">Stream: idle</span>
           <span class="pill" id="rom-status">ROM: none</span>
+          <span class="pill" id="sync-status">Sync: waiting for ROM</span>
         </div>
 
         <div class="controls">
           <label for="rom-input">Local ROM (.nes)</label>
           <input id="rom-input" type="file" accept=".nes" />
-
-          <label for="quality">Stream quality</label>
-          <div class="inline">
-            <select id="quality">
-              <option value="low">Low (2x, 30fps)</option>
-              <option value="balanced">Balanced (3x, 30fps)</option>
-              <option value="high">High (3x, 60fps)</option>
-            </select>
-          </div>
 
           <div class="peer-box">
             <div>
@@ -43,7 +34,8 @@
           </div>
 
           <span>Player 1 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Share the Peer ID with the guest to connect.</span>
+          <span>Both players must load the exact same ROM file before sync starts.</span>
+          <span>Input delay: 2 frames (lockstep).</span>
         </div>
 
         <div class="screen-wrap">

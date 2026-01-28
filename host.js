@@ -1,8 +1,8 @@
-(() => {
+﻿(() => {
   const peerStatus = document.querySelector("#peer-status");
   const guestStatus = document.querySelector("#guest-status");
-  const streamStatus = document.querySelector("#stream-status");
   const romStatus = document.querySelector("#rom-status");
+  const syncStatus = document.querySelector("#sync-status");
   const romInput = document.querySelector("#rom-input");
   const canvas = document.querySelector("#screen");
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -15,19 +15,15 @@
   const joystickKnob = document.querySelector("#joystick-knob");
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
-  const qualitySelect = document.querySelector("#quality");
+
   const NES_WIDTH = 256;
   const NES_HEIGHT = 240;
-  const QUALITY_PRESETS = {
-    low: { scale: 2, fps: 30 },
-    balanced: { scale: 3, fps: 30 },
-    high: { scale: 3, fps: 60 },
-  };
-  const DEFAULT_QUALITY = "low";
-  let scale = QUALITY_PRESETS[DEFAULT_QUALITY].scale;
-  let streamFps = QUALITY_PRESETS[DEFAULT_QUALITY].fps;
-  let outputWidth = NES_WIDTH * scale;
-  let outputHeight = NES_HEIGHT * scale;
+  const SCALE = 3;
+  const FRAME_MS = 1000 / 60;
+  const INPUT_DELAY_FRAMES = 2;
+  const MAX_SIM_STEPS = 4;
+  const LOCAL_PLAYER = 1;
+  const REMOTE_PLAYER = 2;
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -46,6 +42,8 @@
     LEFT: jsnes.Controller.BUTTON_LEFT,
     RIGHT: jsnes.Controller.BUTTON_RIGHT,
   };
+
+  const BUTTON_ORDER = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
 
   const KEY_MAP = {
     ArrowUp: "UP",
@@ -66,14 +64,28 @@
   const imageData = baseCtx.createImageData(NES_WIDTH, NES_HEIGHT);
   const frameBufferU32 = new Uint32Array(imageData.data.buffer);
 
-  let running = false;
   let nes = null;
   let peer = null;
   let dataConn = null;
-  let mediaCall = null;
-  let canvasStream = null;
+  let running = false;
+  let syncActive = false;
+  let localReady = false;
+  let remoteReady = false;
+  let romInfoLocal = null;
+  let romInfoRemote = null;
+
+  let simFrame = 0;
+  let inputFrame = 0;
+  let lastTime = 0;
+  let accumulator = 0;
+
+  const inputBuffer = new Map();
   const localSources = new Map();
-  const remotePressed = new Set();
+  const localInput = makeButtons();
+  const appliedButtons = {
+    1: makeButtons(),
+    2: makeButtons(),
+  };
   const joystickState = {
     active: false,
     pointerId: null,
@@ -82,20 +94,21 @@
     radius: 0,
   };
 
+  // --- UI helpers ---
   function setPill(el, text, warn = false) {
+    if (!el) return;
     el.textContent = text;
-    if (warn) {
-      el.dataset.tone = "warn";
-    } else {
-      el.dataset.tone = "";
-    }
+    el.dataset.tone = warn ? "warn" : "";
   }
 
+  function setSyncStatus(text, warn = false) {
+    setPill(syncStatus, `Sync: ${text}`, warn);
+  }
+
+  // --- Emulator render ---
   function updateOutputSize() {
-    outputWidth = NES_WIDTH * scale;
-    outputHeight = NES_HEIGHT * scale;
-    canvas.width = outputWidth;
-    canvas.height = outputHeight;
+    canvas.width = NES_WIDTH * SCALE;
+    canvas.height = NES_HEIGHT * SCALE;
     ctx.imageSmoothingEnabled = false;
     baseCtx.imageSmoothingEnabled = false;
     ctx.fillStyle = "#000";
@@ -109,7 +122,7 @@
           frameBufferU32[i] = 0xff000000 | framebuffer[i];
         }
         baseCtx.putImageData(imageData, 0, 0);
-        ctx.drawImage(baseCanvas, 0, 0, outputWidth, outputHeight);
+        ctx.drawImage(baseCanvas, 0, 0, canvas.width, canvas.height);
       },
       onStatusUpdate(status) {
         setPill(romStatus, `ROM: ${status}`);
@@ -117,12 +130,177 @@
     });
   }
 
-  function frameLoop() {
-    if (!running) return;
-    nes.frame();
+  // --- Input buffer + lockstep ---
+  function makeButtons() {
+    return {
+      A: false,
+      B: false,
+      UP: false,
+      DOWN: false,
+      LEFT: false,
+      RIGHT: false,
+      START: false,
+      SELECT: false,
+    };
+  }
+
+  function cloneButtons(state) {
+    return {
+      A: !!state.A,
+      B: !!state.B,
+      UP: !!state.UP,
+      DOWN: !!state.DOWN,
+      LEFT: !!state.LEFT,
+      RIGHT: !!state.RIGHT,
+      START: !!state.START,
+      SELECT: !!state.SELECT,
+    };
+  }
+
+  function seedInputBuffer() {
+    if (INPUT_DELAY_FRAMES <= 0) return;
+    const neutral = makeButtons();
+    for (let f = 0; f < INPUT_DELAY_FRAMES; f += 1) {
+      inputBuffer.set(f, {
+        1: cloneButtons(neutral),
+        2: cloneButtons(neutral),
+      });
+    }
+  }
+
+  function clearAppliedInputs() {
+    [LOCAL_PLAYER, REMOTE_PLAYER].forEach((player) => {
+      const current = appliedButtons[player];
+      BUTTON_ORDER.forEach((btn) => {
+        if (current[btn]) {
+          nes.buttonUp(player, NES_BUTTONS[btn]);
+          current[btn] = false;
+        }
+      });
+    });
+  }
+
+  function resetSyncState() {
+    inputBuffer.clear();
+    simFrame = 0;
+    inputFrame = 0;
+    accumulator = 0;
+    if (nes) clearAppliedInputs();
+    seedInputBuffer();
+  }
+
+  function stopSync(reason, warn = false) {
+    syncActive = false;
+    running = false;
+    if (reason) setSyncStatus(reason, warn);
+    resetSyncState();
+  }
+
+  function maybeStartSync() {
+    if (syncActive) return;
+    if (!localReady || !remoteReady) return;
+    if (!dataConn || !dataConn.open) return;
+    if (romInfoLocal && romInfoRemote && !romMatches()) {
+      setSyncStatus("ROM mismatch", true);
+      return;
+    }
+    resetSyncState();
+    syncActive = true;
+    running = true;
+    lastTime = performance.now();
+    setSyncStatus("running");
     requestAnimationFrame(frameLoop);
   }
 
+  function romMatches() {
+    if (!romInfoLocal || !romInfoRemote) return true;
+    return romInfoLocal.hash === romInfoRemote.hash && romInfoLocal.size === romInfoRemote.size;
+  }
+
+  function storeInput(frame, player, buttons) {
+    if (typeof frame !== "number" || !buttons) return;
+    let entry = inputBuffer.get(frame);
+    if (!entry) {
+      entry = { 1: null, 2: null };
+      inputBuffer.set(frame, entry);
+    }
+    entry[player] = cloneButtons(buttons);
+  }
+
+  function applyButtonsForFrame(entry) {
+    [LOCAL_PLAYER, REMOTE_PLAYER].forEach((player) => {
+      const next = entry[player];
+      if (!next) return;
+      const current = appliedButtons[player];
+      BUTTON_ORDER.forEach((btn) => {
+        const want = !!next[btn];
+        const had = !!current[btn];
+        if (want && !had) nes.buttonDown(player, NES_BUTTONS[btn]);
+        if (!want && had) nes.buttonUp(player, NES_BUTTONS[btn]);
+        current[btn] = want;
+      });
+    });
+  }
+
+  // Lockstep pseudo-code:
+  // every tick:
+  //   sample local input -> frame = inputFrame + INPUT_DELAY
+  //   send input(frame)
+  //   while both inputs available for simFrame:
+  //     apply inputs -> nes.frame() -> simFrame++
+  function stepLockstep() {
+    let steps = 0;
+    while (steps < MAX_SIM_STEPS) {
+      const entry = inputBuffer.get(simFrame);
+      if (!entry || !entry[1] || !entry[2]) break;
+      inputBuffer.delete(simFrame);
+      applyButtonsForFrame(entry);
+      nes.frame();
+      simFrame += 1;
+      steps += 1;
+    }
+    if (steps === 0) {
+      setSyncStatus("waiting input", true);
+    } else {
+      setSyncStatus(`running f${simFrame}`);
+    }
+  }
+
+  function sendLocalInputFrame() {
+    const frame = inputFrame + INPUT_DELAY_FRAMES;
+    const buttons = cloneButtons(localInput);
+    storeInput(frame, LOCAL_PLAYER, buttons);
+    if (dataConn && dataConn.open) {
+      dataConn.send({
+        type: "input",
+        frame,
+        player: LOCAL_PLAYER,
+        buttons,
+      });
+    }
+    inputFrame += 1;
+  }
+
+  function frameLoop(now) {
+    if (!running) return;
+    const delta = now - lastTime;
+    lastTime = now;
+    accumulator += delta;
+
+    while (accumulator >= FRAME_MS) {
+      if (!syncActive) {
+        accumulator = 0;
+        break;
+      }
+      sendLocalInputFrame();
+      stepLockstep();
+      accumulator -= FRAME_MS;
+    }
+
+    requestAnimationFrame(frameLoop);
+  }
+
+  // --- ROM loading + hash ---
   function loadRom(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -147,10 +325,29 @@
     });
   }
 
+  function computeRomHash(binary) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < binary.length; i += 1) {
+      hash ^= binary.charCodeAt(i) & 0xff;
+      hash = (hash * 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
+  }
+
+  // --- Network layer ---
+  function sendRomInfo() {
+    if (!dataConn || !dataConn.open || !romInfoLocal) return;
+    dataConn.send({ type: "rom_info", ...romInfoLocal });
+  }
+
+  function sendReady() {
+    if (!dataConn || !dataConn.open) return;
+    dataConn.send({ type: "ready" });
+  }
+
+  // --- Local input capture ---
   function updateLocalButton(btnName, source, pressed) {
-    if (!nes) return;
-    const nesBtn = NES_BUTTONS[btnName];
-    if (nesBtn === undefined) return;
+    if (!btnName) return;
     const sources = localSources.get(btnName) || new Set();
     const wasPressed = sources.size > 0;
     if (pressed) {
@@ -165,11 +362,7 @@
     }
     const isPressed = sources.size > 0;
     if (wasPressed !== isPressed) {
-      if (isPressed) {
-        nes.buttonDown(1, nesBtn);
-      } else {
-        nes.buttonUp(1, nesBtn);
-      }
+      localInput[btnName] = isPressed;
     }
   }
 
@@ -179,96 +372,13 @@
     updateLocalButton(btnName, "keyboard", pressed);
   }
 
-  function applyRemoteInput(btnName, pressed) {
-    if (!nes) return;
-    const nesBtn = NES_BUTTONS[btnName];
-    if (nesBtn === undefined) return;
-    if (pressed) {
-      if (remotePressed.has(btnName)) return;
-      nes.buttonDown(2, nesBtn);
-      remotePressed.add(btnName);
-    } else {
-      if (!remotePressed.has(btnName)) return;
-      nes.buttonUp(2, nesBtn);
-      remotePressed.delete(btnName);
-    }
-  }
-
-  function releaseAllRemote() {
-    for (const btnName of remotePressed) {
-      const nesBtn = NES_BUTTONS[btnName];
-      if (nesBtn !== undefined && nes) nes.buttonUp(2, nesBtn);
-    }
-    remotePressed.clear();
-  }
-
   function releaseAllLocal() {
-    for (const btnName of localSources.keys()) {
-      const nesBtn = NES_BUTTONS[btnName];
-      if (nesBtn !== undefined && nes) nes.buttonUp(1, nesBtn);
-    }
+    BUTTON_ORDER.forEach((btnName) => {
+      localInput[btnName] = false;
+    });
     localSources.clear();
     resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
-  }
-
-  function ensureCanvasStream() {
-    if (canvasStream) return canvasStream;
-    if (!canvas.captureStream) {
-      setPill(streamStatus, "Stream: unsupported", true);
-      return null;
-    }
-    canvasStream = canvas.captureStream(streamFps);
-    const [track] = canvasStream.getVideoTracks();
-    if (track) track.contentHint = "detail";
-    return canvasStream;
-  }
-
-  function stopMediaCall() {
-    if (mediaCall) {
-      mediaCall.close();
-      mediaCall = null;
-    }
-  }
-
-  function startMediaCall(guestId) {
-    const stream = ensureCanvasStream();
-    if (!stream || !peer) return;
-    stopMediaCall();
-    try {
-      mediaCall = peer.call(guestId, stream, { metadata: { role: "host" } });
-    } catch (err) {
-      setPill(streamStatus, "Stream: failed", true);
-      console.error(err);
-      return;
-    }
-    if (!mediaCall) {
-      setPill(streamStatus, "Stream: failed", true);
-      return;
-    }
-    setPill(streamStatus, "Stream: live");
-    mediaCall.on("close", () => {
-      setPill(streamStatus, "Stream: closed", true);
-    });
-    mediaCall.on("error", (err) => {
-      setPill(streamStatus, "Stream: error", true);
-      console.error(err);
-    });
-  }
-
-  function applyQuality(presetKey) {
-    const preset = QUALITY_PRESETS[presetKey] || QUALITY_PRESETS[DEFAULT_QUALITY];
-    scale = preset.scale;
-    streamFps = preset.fps;
-    updateOutputSize();
-    if (canvasStream) {
-      canvasStream.getTracks().forEach((track) => track.stop());
-      canvasStream = null;
-    }
-    if (dataConn && dataConn.open) {
-      setPill(streamStatus, "Stream: restarting");
-      startMediaCall(dataConn.peer);
-    }
   }
 
   function getButtonTargets(button) {
@@ -336,29 +446,53 @@
       dataConn.close();
     }
     dataConn = conn;
+    remoteReady = false;
+    romInfoRemote = null;
     setPill(guestStatus, "Guest: connecting...");
 
     conn.on("open", () => {
       setPill(guestStatus, `Guest: ${conn.peer}`);
-      setPill(streamStatus, "Stream: starting");
-      startMediaCall(conn.peer);
+      sendRomInfo();
+      if (localReady) sendReady();
+      setSyncStatus("waiting for guest");
+      maybeStartSync();
     });
 
     conn.on("data", (msg) => {
-      if (!msg || msg.type !== "input") return;
-      applyRemoteInput(msg.btn, msg.pressed);
+      if (!msg || !msg.type) return;
+      if (msg.type === "input") {
+        if (msg.player !== REMOTE_PLAYER) return;
+        storeInput(msg.frame, msg.player, msg.buttons);
+        return;
+      }
+      if (msg.type === "ready") {
+        remoteReady = true;
+        setSyncStatus("guest ready");
+        maybeStartSync();
+        return;
+      }
+      if (msg.type === "rom_info") {
+        romInfoRemote = msg;
+        if (!romMatches()) {
+          setSyncStatus("ROM mismatch", true);
+          stopSync("ROM mismatch", true);
+        } else {
+          setSyncStatus("ROM verified");
+          maybeStartSync();
+        }
+      }
     });
 
     conn.on("close", () => {
       setPill(guestStatus, "Guest: waiting", true);
-      setPill(streamStatus, "Stream: idle");
-      releaseAllRemote();
-      stopMediaCall();
+      stopSync("waiting for guest", true);
+      remoteReady = false;
+      romInfoRemote = null;
     });
 
     conn.on("error", (err) => {
       setPill(guestStatus, "Guest: error", true);
-      setPill(streamStatus, "Stream: error", true);
+      setSyncStatus("network error", true);
       console.error(err);
     });
   }
@@ -379,25 +513,6 @@
     });
 
     peer.on("connection", handleDataConnection);
-
-    peer.on("call", (call) => {
-      const stream = ensureCanvasStream();
-      if (!stream) {
-        call.close();
-        return;
-      }
-      stopMediaCall();
-      mediaCall = call;
-      setPill(streamStatus, "Stream: answering");
-      call.answer(stream);
-      call.on("close", () => {
-        setPill(streamStatus, "Stream: closed", true);
-      });
-      call.on("error", (err) => {
-        setPill(streamStatus, "Stream: error", true);
-        console.error(err);
-      });
-    });
 
     peer.on("disconnected", () => {
       setPill(peerStatus, "Peer: disconnected", true);
@@ -475,13 +590,6 @@
     }
   }
 
-  if (qualitySelect) {
-    qualitySelect.value = DEFAULT_QUALITY;
-    qualitySelect.addEventListener("change", () => {
-      applyQuality(qualitySelect.value);
-    });
-  }
-
   controlButtons.forEach((button) => {
     const targets = getButtonTargets(button);
     const press = () => {
@@ -530,20 +638,24 @@
     try {
       setPill(romStatus, `ROM: loading ${file.name}`);
       const romData = await loadRom(file);
+      const hash = computeRomHash(romData);
+      romInfoLocal = { name: file.name, size: file.size, hash };
       nes.loadROM(romData);
       setPill(romStatus, `ROM: ${file.name}`);
-      if (!running) {
-        running = true;
-        requestAnimationFrame(frameLoop);
-      }
+      localReady = true;
+      sendRomInfo();
+      sendReady();
+      setSyncStatus("waiting for guest");
+      maybeStartSync();
     } catch (err) {
       setPill(romStatus, "ROM: failed", true);
+      setSyncStatus("ROM load failed", true);
       console.error(err);
     }
   });
 
   updateOutputSize();
   initNes();
-  ensureCanvasStream();
+  setSyncStatus("waiting for ROM");
   setupPeer();
 })();

@@ -1,23 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Guest - NES Retro Multiplayer</title>
+    <title>Guest - NES Netplay</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="wrap">
       <header>
-        <h1>Guest Controller</h1>
-        <p>Connect to the host by Peer ID, watch the live stream, and send Player 2 input.</p>
+        <h1>Guest Console</h1>
+        <p>Run jsnes locally, connect by Peer ID, and sync input via lockstep.</p>
       </header>
 
       <section class="panel">
         <div class="status">
           <span class="pill" id="peer-status">Peer: connecting...</span>
           <span class="pill" id="host-status">Host: not connected</span>
-          <span class="pill" id="stream-status">Stream: idle</span>
+          <span class="pill" id="rom-status">ROM: none</span>
+          <span class="pill" id="sync-status">Sync: waiting for ROM</span>
         </div>
 
         <div class="controls">
@@ -26,13 +27,18 @@
             <input id="host-id" type="text" placeholder="Paste host ID" autocomplete="off" />
             <button class="button" id="connect-btn" type="button">Connect</button>
           </div>
-          <span>Keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
+
+          <label for="rom-input">Local ROM (.nes)</label>
+          <input id="rom-input" type="file" accept=".nes" />
+
+          <span>Player 2 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
           <span>Gamepad: standard layout supported. Touch controls below for mobile.</span>
+          <span>ROM must match the host exactly. Input delay: 2 frames.</span>
         </div>
 
         <div class="screen-wrap">
           <div class="video-frame" id="video-frame">
-            <video id="screen" playsinline autoplay muted></video>
+            <canvas id="screen" width="256" height="240"></canvas>
             <button class="button secondary fullscreen-btn" id="fullscreen-btn" type="button">
               Fullscreen
             </button>
@@ -61,6 +67,7 @@
       </section>
     </div>
 
+    <script src="https://unpkg.com/jsnes/dist/jsnes.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="guest.js" defer></script>
   </body>

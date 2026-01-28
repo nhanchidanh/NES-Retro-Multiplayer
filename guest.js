@@ -1,15 +1,27 @@
-(() => {
+﻿(() => {
   const peerStatus = document.querySelector("#peer-status");
   const hostStatus = document.querySelector("#host-status");
-  const streamStatus = document.querySelector("#stream-status");
+  const romStatus = document.querySelector("#rom-status");
+  const syncStatus = document.querySelector("#sync-status");
   const hostIdInput = document.querySelector("#host-id");
   const connectBtn = document.querySelector("#connect-btn");
-  const video = document.querySelector("#screen");
+  const canvas = document.querySelector("#screen");
+  const ctx = canvas.getContext("2d", { alpha: false });
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
+  const romInput = document.querySelector("#rom-input");
   const controlButtons = Array.from(document.querySelectorAll("[data-btn], [data-combo]"));
   const joystickBase = document.querySelector("#joystick-base");
   const joystickKnob = document.querySelector("#joystick-knob");
+
+  const NES_WIDTH = 256;
+  const NES_HEIGHT = 240;
+  const SCALE = 3;
+  const FRAME_MS = 1000 / 60;
+  const INPUT_DELAY_FRAMES = 2;
+  const MAX_SIM_STEPS = 4;
+  const LOCAL_PLAYER = 2;
+  const REMOTE_PLAYER = 1;
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -17,6 +29,19 @@
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
   ];
+
+  const NES_BUTTONS = {
+    A: jsnes.Controller.BUTTON_A,
+    B: jsnes.Controller.BUTTON_B,
+    SELECT: jsnes.Controller.BUTTON_SELECT,
+    START: jsnes.Controller.BUTTON_START,
+    UP: jsnes.Controller.BUTTON_UP,
+    DOWN: jsnes.Controller.BUTTON_DOWN,
+    LEFT: jsnes.Controller.BUTTON_LEFT,
+    RIGHT: jsnes.Controller.BUTTON_RIGHT,
+  };
+
+  const BUTTON_ORDER = ["A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
 
   const KEY_MAP = {
     ArrowUp: "UP",
@@ -41,15 +66,40 @@
     15: "RIGHT",
   };
 
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = NES_WIDTH;
+  baseCanvas.height = NES_HEIGHT;
+  const baseCtx = baseCanvas.getContext("2d", { alpha: false });
+  const imageData = baseCtx.createImageData(NES_WIDTH, NES_HEIGHT);
+  const frameBufferU32 = new Uint32Array(imageData.data.buffer);
+
+  let nes = null;
   let peer = null;
   let dataConn = null;
-  let mediaCall = null;
+  let running = false;
+  let syncActive = false;
+  let localReady = false;
+  let remoteReady = false;
+  let romInfoLocal = null;
+  let romInfoRemote = null;
   let gamepadIndex = null;
   let wakeLock = null;
   let wantsWakeLock = false;
+
+  let simFrame = 0;
+  let inputFrame = 0;
+  let lastTime = 0;
+  let accumulator = 0;
+
+  const inputBuffer = new Map();
+  const localSources = new Map();
+  const localInput = makeButtons();
+  const appliedButtons = {
+    1: makeButtons(),
+    2: makeButtons(),
+  };
   const gamepadButtons = {};
   const axisState = { left: false, right: false, up: false, down: false };
-  const pressedSources = new Map();
   const joystickState = {
     active: false,
     pointerId: null,
@@ -58,20 +108,258 @@
     radius: 0,
   };
 
+  // --- UI helpers ---
   function setPill(el, text, warn = false) {
+    if (!el) return;
     el.textContent = text;
-    if (warn) {
-      el.dataset.tone = "warn";
-    } else {
-      el.dataset.tone = "";
+    el.dataset.tone = warn ? "warn" : "";
+  }
+
+  function setSyncStatus(text, warn = false) {
+    setPill(syncStatus, `Sync: ${text}`, warn);
+  }
+
+  // --- Emulator render ---
+  function updateOutputSize() {
+    canvas.width = NES_WIDTH * SCALE;
+    canvas.height = NES_HEIGHT * SCALE;
+    ctx.imageSmoothingEnabled = false;
+    baseCtx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function initNes() {
+    nes = new jsnes.NES({
+      onFrame(framebuffer) {
+        for (let i = 0; i < framebuffer.length; i += 1) {
+          frameBufferU32[i] = 0xff000000 | framebuffer[i];
+        }
+        baseCtx.putImageData(imageData, 0, 0);
+        ctx.drawImage(baseCanvas, 0, 0, canvas.width, canvas.height);
+      },
+      onStatusUpdate(status) {
+        setPill(romStatus, `ROM: ${status}`);
+      },
+    });
+  }
+
+  // --- Input buffer + lockstep ---
+  function makeButtons() {
+    return {
+      A: false,
+      B: false,
+      UP: false,
+      DOWN: false,
+      LEFT: false,
+      RIGHT: false,
+      START: false,
+      SELECT: false,
+    };
+  }
+
+  function cloneButtons(state) {
+    return {
+      A: !!state.A,
+      B: !!state.B,
+      UP: !!state.UP,
+      DOWN: !!state.DOWN,
+      LEFT: !!state.LEFT,
+      RIGHT: !!state.RIGHT,
+      START: !!state.START,
+      SELECT: !!state.SELECT,
+    };
+  }
+
+  function seedInputBuffer() {
+    if (INPUT_DELAY_FRAMES <= 0) return;
+    const neutral = makeButtons();
+    for (let f = 0; f < INPUT_DELAY_FRAMES; f += 1) {
+      inputBuffer.set(f, {
+        1: cloneButtons(neutral),
+        2: cloneButtons(neutral),
+      });
     }
   }
 
-  function sendInput(btn, pressedState) {
-    if (!dataConn || !dataConn.open) return;
-    dataConn.send({ type: "input", btn, pressed: pressedState });
+  function clearAppliedInputs() {
+    [LOCAL_PLAYER, REMOTE_PLAYER].forEach((player) => {
+      const current = appliedButtons[player];
+      BUTTON_ORDER.forEach((btn) => {
+        if (current[btn]) {
+          nes.buttonUp(player, NES_BUTTONS[btn]);
+          current[btn] = false;
+        }
+      });
+    });
   }
 
+  function resetSyncState() {
+    inputBuffer.clear();
+    simFrame = 0;
+    inputFrame = 0;
+    accumulator = 0;
+    if (nes) clearAppliedInputs();
+    seedInputBuffer();
+  }
+
+  function stopSync(reason, warn = false) {
+    syncActive = false;
+    running = false;
+    if (reason) setSyncStatus(reason, warn);
+    resetSyncState();
+  }
+
+  function maybeStartSync() {
+    if (syncActive) return;
+    if (!localReady || !remoteReady) return;
+    if (!dataConn || !dataConn.open) return;
+    if (romInfoLocal && romInfoRemote && !romMatches()) {
+      setSyncStatus("ROM mismatch", true);
+      return;
+    }
+    resetSyncState();
+    syncActive = true;
+    running = true;
+    lastTime = performance.now();
+    setSyncStatus("running");
+    requestAnimationFrame(frameLoop);
+  }
+
+  function romMatches() {
+    if (!romInfoLocal || !romInfoRemote) return true;
+    return romInfoLocal.hash === romInfoRemote.hash && romInfoLocal.size === romInfoRemote.size;
+  }
+
+  function storeInput(frame, player, buttons) {
+    if (typeof frame !== "number" || !buttons) return;
+    let entry = inputBuffer.get(frame);
+    if (!entry) {
+      entry = { 1: null, 2: null };
+      inputBuffer.set(frame, entry);
+    }
+    entry[player] = cloneButtons(buttons);
+  }
+
+  function applyButtonsForFrame(entry) {
+    [LOCAL_PLAYER, REMOTE_PLAYER].forEach((player) => {
+      const next = entry[player];
+      if (!next) return;
+      const current = appliedButtons[player];
+      BUTTON_ORDER.forEach((btn) => {
+        const want = !!next[btn];
+        const had = !!current[btn];
+        if (want && !had) nes.buttonDown(player, NES_BUTTONS[btn]);
+        if (!want && had) nes.buttonUp(player, NES_BUTTONS[btn]);
+        current[btn] = want;
+      });
+    });
+  }
+
+  // Lockstep pseudo-code:
+  // every tick:
+  //   sample local input -> frame = inputFrame + INPUT_DELAY
+  //   send input(frame)
+  //   while both inputs available for simFrame:
+  //     apply inputs -> nes.frame() -> simFrame++
+  function stepLockstep() {
+    let steps = 0;
+    while (steps < MAX_SIM_STEPS) {
+      const entry = inputBuffer.get(simFrame);
+      if (!entry || !entry[1] || !entry[2]) break;
+      inputBuffer.delete(simFrame);
+      applyButtonsForFrame(entry);
+      nes.frame();
+      simFrame += 1;
+      steps += 1;
+    }
+    if (steps === 0) {
+      setSyncStatus("waiting input", true);
+    } else {
+      setSyncStatus(`running f${simFrame}`);
+    }
+  }
+
+  function sendLocalInputFrame() {
+    const frame = inputFrame + INPUT_DELAY_FRAMES;
+    const buttons = cloneButtons(localInput);
+    storeInput(frame, LOCAL_PLAYER, buttons);
+    if (dataConn && dataConn.open) {
+      dataConn.send({
+        type: "input",
+        frame,
+        player: LOCAL_PLAYER,
+        buttons,
+      });
+    }
+    inputFrame += 1;
+  }
+
+  function frameLoop(now) {
+    if (!running) return;
+    const delta = now - lastTime;
+    lastTime = now;
+    accumulator += delta;
+
+    while (accumulator >= FRAME_MS) {
+      if (!syncActive) {
+        accumulator = 0;
+        break;
+      }
+      sendLocalInputFrame();
+      stepLockstep();
+      accumulator -= FRAME_MS;
+    }
+
+    requestAnimationFrame(frameLoop);
+  }
+
+  // --- ROM loading + hash ---
+  function loadRom(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      if (reader.readAsBinaryString) {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsBinaryString(file);
+        return;
+      }
+      reader.onload = () => {
+        const bytes = new Uint8Array(reader.result);
+        const chunk = 0x8000;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += chunk) {
+          const slice = bytes.subarray(i, i + chunk);
+          binary += String.fromCharCode.apply(null, slice);
+        }
+        resolve(binary);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function computeRomHash(binary) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < binary.length; i += 1) {
+      hash ^= binary.charCodeAt(i) & 0xff;
+      hash = (hash * 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
+  }
+
+  // --- Network layer ---
+  function sendRomInfo() {
+    if (!dataConn || !dataConn.open || !romInfoLocal) return;
+    dataConn.send({ type: "rom_info", ...romInfoLocal });
+  }
+
+  function sendReady() {
+    if (!dataConn || !dataConn.open) return;
+    dataConn.send({ type: "ready" });
+  }
+
+  // --- Local input capture ---
   function haptic(pattern = 15) {
     if (navigator.vibrate) navigator.vibrate(pattern);
   }
@@ -112,31 +400,43 @@
     setWakeLockEnabled(shouldHoldWakeLock());
   }
 
-  function updateButton(btn, source, pressed) {
-    if (!btn) return;
-    const sources = pressedSources.get(btn) || new Set();
-    const hadPressed = sources.size > 0;
+  function updateLocalButton(btnName, source, pressed) {
+    if (!btnName) return;
+    const sources = localSources.get(btnName) || new Set();
+    const wasPressed = sources.size > 0;
     if (pressed) {
       sources.add(source);
     } else {
       sources.delete(source);
     }
     if (sources.size === 0) {
-      pressedSources.delete(btn);
+      localSources.delete(btnName);
     } else {
-      pressedSources.set(btn, sources);
+      localSources.set(btnName, sources);
     }
-    const hasPressed = sources.size > 0;
-    if (hadPressed !== hasPressed) {
-      sendInput(btn, hasPressed);
+    const isPressed = sources.size > 0;
+    if (wasPressed !== isPressed) {
+      localInput[btnName] = isPressed;
     }
   }
 
-  function releaseAll() {
-    for (const btn of pressedSources.keys()) {
-      sendInput(btn, false);
+  function releaseSource(source) {
+    for (const [btn, sources] of localSources.entries()) {
+      if (!sources.has(source)) continue;
+      sources.delete(source);
+      if (sources.size === 0) {
+        localSources.delete(btn);
+      }
+      localInput[btn] = sources.size > 0;
     }
-    pressedSources.clear();
+    if (source === "gamepad") resetGamepadState();
+  }
+
+  function releaseAll() {
+    BUTTON_ORDER.forEach((btn) => {
+      localInput[btn] = false;
+    });
+    localSources.clear();
     resetGamepadState();
     resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
@@ -152,19 +452,6 @@
     }
     const single = button.dataset.btn;
     return single ? [single] : [];
-  }
-
-  function releaseSource(source) {
-    for (const [btn, sources] of pressedSources.entries()) {
-      if (!sources.has(source)) continue;
-      sources.delete(source);
-      const hasPressed = sources.size > 0;
-      if (!hasPressed) {
-        pressedSources.delete(btn);
-      }
-      sendInput(btn, hasPressed);
-    }
-    if (source === "gamepad") resetGamepadState();
   }
 
   function resetGamepadState() {
@@ -192,10 +479,10 @@
     const distance = Math.hypot(x, y);
     const normX = distance < deadZone ? 0 : x / radius;
     const normY = distance < deadZone ? 0 : y / radius;
-    updateButton("LEFT", "joystick", normX < -axisThreshold);
-    updateButton("RIGHT", "joystick", normX > axisThreshold);
-    updateButton("UP", "joystick", normY < -axisThreshold);
-    updateButton("DOWN", "joystick", normY > axisThreshold);
+    updateLocalButton("LEFT", "joystick", normX < -axisThreshold);
+    updateLocalButton("RIGHT", "joystick", normX > axisThreshold);
+    updateLocalButton("UP", "joystick", normY < -axisThreshold);
+    updateLocalButton("DOWN", "joystick", normY > axisThreshold);
   }
 
   function handleJoystickMove(event) {
@@ -218,46 +505,36 @@
 
   function releaseJoystick() {
     if (!joystickState.active) return;
-    updateButton("LEFT", "joystick", false);
-    updateButton("RIGHT", "joystick", false);
-    updateButton("UP", "joystick", false);
-    updateButton("DOWN", "joystick", false);
+    updateLocalButton("LEFT", "joystick", false);
+    updateLocalButton("RIGHT", "joystick", false);
+    updateLocalButton("UP", "joystick", false);
+    updateLocalButton("DOWN", "joystick", false);
     resetJoystickVisual();
   }
 
-  function syncPressed() {
-    for (const btn of pressedSources.keys()) {
-      sendInput(btn, true);
+  function handleDataMessage(msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === "input") {
+      if (msg.player !== REMOTE_PLAYER) return;
+      storeInput(msg.frame, msg.player, msg.buttons);
+      return;
     }
-  }
-
-  function cleanupMedia() {
-    if (mediaCall) {
-      mediaCall.close();
-      mediaCall = null;
+    if (msg.type === "ready") {
+      remoteReady = true;
+      setSyncStatus("host ready");
+      maybeStartSync();
+      return;
     }
-    video.srcObject = null;
-  }
-
-  function handleCall(call) {
-    cleanupMedia();
-    mediaCall = call;
-    setPill(streamStatus, "Stream: connecting");
-    call.answer();
-    call.on("stream", (stream) => {
-      video.srcObject = stream;
-      setPill(streamStatus, "Stream: live");
-      refreshWakeLock();
-    });
-    call.on("close", () => {
-      setPill(streamStatus, "Stream: closed", true);
-      video.srcObject = null;
-      refreshWakeLock();
-    });
-    call.on("error", (err) => {
-      setPill(streamStatus, "Stream: error", true);
-      console.error(err);
-    });
+    if (msg.type === "rom_info") {
+      romInfoRemote = msg;
+      if (!romMatches()) {
+        setSyncStatus("ROM mismatch", true);
+        stopSync("ROM mismatch", true);
+      } else {
+        setSyncStatus("ROM verified");
+        maybeStartSync();
+      }
+    }
   }
 
   function setupPeer() {
@@ -272,8 +549,6 @@
     peer.on("open", (id) => {
       setPill(peerStatus, `Peer: ${id}`);
     });
-
-    peer.on("call", handleCall);
 
     peer.on("disconnected", () => {
       setPill(peerStatus, "Peer: disconnected", true);
@@ -293,35 +568,37 @@
       return;
     }
     if (dataConn) dataConn.close();
+    remoteReady = false;
+    romInfoRemote = null;
     setPill(hostStatus, "Host: connecting...");
-    setPill(streamStatus, "Stream: waiting");
+    setSyncStatus("connecting...");
     dataConn = peer.connect(hostId, {
-      reliable: false,
+      reliable: true,
       metadata: { role: "guest" },
     });
 
     dataConn.on("open", () => {
       setPill(hostStatus, `Host: ${hostId}`);
-      syncPressed();
+      sendRomInfo();
+      if (localReady) sendReady();
+      maybeStartSync();
       refreshWakeLock();
     });
 
-    dataConn.on("data", (msg) => {
-      if (msg && msg.type === "host_ready") {
-        setPill(hostStatus, `Host: ${hostId}`);
-      }
-    });
+    dataConn.on("data", handleDataMessage);
 
     dataConn.on("close", () => {
       setPill(hostStatus, "Host: disconnected", true);
-      setPill(streamStatus, "Stream: idle", true);
+      stopSync("waiting for host", true);
       releaseAll();
-      cleanupMedia();
+      remoteReady = false;
+      romInfoRemote = null;
       refreshWakeLock();
     });
 
     dataConn.on("error", (err) => {
       setPill(hostStatus, "Host: error", true);
+      setSyncStatus("network error", true);
       console.error(err);
     });
   }
@@ -331,14 +608,14 @@
     const btn = KEY_MAP[event.code];
     if (!btn) return;
     event.preventDefault();
-    updateButton(btn, "keyboard", true);
+    updateLocalButton(btn, "keyboard", true);
   });
 
   window.addEventListener("keyup", (event) => {
     const btn = KEY_MAP[event.code];
     if (!btn) return;
     event.preventDefault();
-    updateButton(btn, "keyboard", false);
+    updateLocalButton(btn, "keyboard", false);
   });
 
   window.addEventListener("blur", () => {
@@ -358,12 +635,12 @@
     const targets = getButtonTargets(button);
     const press = () => {
       button.classList.add("active");
-      targets.forEach((btn) => updateButton(btn, "touch", true));
+      targets.forEach((btn) => updateLocalButton(btn, "touch", true));
       haptic(12);
     };
     const release = () => {
       button.classList.remove("active");
-      targets.forEach((btn) => updateButton(btn, "touch", false));
+      targets.forEach((btn) => updateLocalButton(btn, "touch", false));
     };
 
     button.addEventListener("pointerdown", (event) => {
@@ -417,7 +694,7 @@
       const pressed = Boolean(pad.buttons[index]?.pressed);
       if (gamepadButtons[index] !== pressed) {
         gamepadButtons[index] = pressed;
-        updateButton(btn, "gamepad", pressed);
+        updateLocalButton(btn, "gamepad", pressed);
       }
     });
 
@@ -430,19 +707,19 @@
 
     if (left !== axisState.left) {
       axisState.left = left;
-      updateButton("LEFT", "gamepad", left);
+      updateLocalButton("LEFT", "gamepad", left);
     }
     if (right !== axisState.right) {
       axisState.right = right;
-      updateButton("RIGHT", "gamepad", right);
+      updateLocalButton("RIGHT", "gamepad", right);
     }
     if (up !== axisState.up) {
       axisState.up = up;
-      updateButton("UP", "gamepad", up);
+      updateLocalButton("UP", "gamepad", up);
     }
     if (down !== axisState.down) {
       axisState.down = down;
-      updateButton("DOWN", "gamepad", down);
+      updateLocalButton("DOWN", "gamepad", down);
     }
 
     requestAnimationFrame(pollGamepad);
@@ -497,6 +774,31 @@
     if (event.key === "Enter") connectToHost();
   });
 
+  romInput.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      setPill(romStatus, `ROM: loading ${file.name}`);
+      const romData = await loadRom(file);
+      const hash = computeRomHash(romData);
+      romInfoLocal = { name: file.name, size: file.size, hash };
+      nes.loadROM(romData);
+      setPill(romStatus, `ROM: ${file.name}`);
+      localReady = true;
+      sendRomInfo();
+      sendReady();
+      setSyncStatus("waiting for host");
+      maybeStartSync();
+    } catch (err) {
+      setPill(romStatus, "ROM: failed", true);
+      setSyncStatus("ROM load failed", true);
+      console.error(err);
+    }
+  });
+
   setupPeer();
+  updateOutputSize();
+  initNes();
+  setSyncStatus("waiting for ROM");
   requestAnimationFrame(pollGamepad);
 })();
