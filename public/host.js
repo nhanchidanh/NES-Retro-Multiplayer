@@ -11,6 +11,11 @@
   const controlButtons = Array.from(document.querySelectorAll(".host-overlay [data-btn]"));
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
+  const NES_WIDTH = 256;
+  const NES_HEIGHT = 240;
+  const SCALE = 3;
+  const OUTPUT_WIDTH = NES_WIDTH * SCALE;
+  const OUTPUT_HEIGHT = NES_HEIGHT * SCALE;
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -42,7 +47,11 @@
     ShiftRight: "SELECT",
   };
 
-  const imageData = ctx.createImageData(256, 240);
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = NES_WIDTH;
+  baseCanvas.height = NES_HEIGHT;
+  const baseCtx = baseCanvas.getContext("2d", { alpha: false });
+  const imageData = baseCtx.createImageData(NES_WIDTH, NES_HEIGHT);
   const frameBufferU32 = new Uint32Array(imageData.data.buffer);
 
   let running = false;
@@ -69,7 +78,8 @@
         for (let i = 0; i < framebuffer.length; i += 1) {
           frameBufferU32[i] = 0xff000000 | framebuffer[i];
         }
-        ctx.putImageData(imageData, 0, 0);
+        baseCtx.putImageData(imageData, 0, 0);
+        ctx.drawImage(baseCanvas, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
       },
       onStatusUpdate(status) {
         setPill(romStatus, `ROM: ${status}`);
@@ -399,6 +409,10 @@
     }
   });
 
+  canvas.width = OUTPUT_WIDTH;
+  canvas.height = OUTPUT_HEIGHT;
+  ctx.imageSmoothingEnabled = false;
+  baseCtx.imageSmoothingEnabled = false;
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   initNes();
