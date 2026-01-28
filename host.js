@@ -8,7 +8,9 @@
   const ctx = canvas.getContext("2d", { alpha: false });
   const peerIdEl = document.querySelector("#peer-id");
   const copyIdBtn = document.querySelector("#copy-id");
-  const controlButtons = Array.from(document.querySelectorAll(".host-overlay [data-btn]"));
+  const controlButtons = Array.from(
+    document.querySelectorAll(".host-overlay [data-btn], .host-overlay [data-combo]")
+  );
   const joystickBase = document.querySelector("#joystick-base");
   const joystickKnob = document.querySelector("#joystick-knob");
   const videoFrame = document.querySelector("#video-frame");
@@ -269,6 +271,18 @@
     }
   }
 
+  function getButtonTargets(button) {
+    const combo = button.dataset.combo;
+    if (combo) {
+      return combo
+        .split(",")
+        .map((btn) => btn.trim())
+        .filter(Boolean);
+    }
+    const single = button.dataset.btn;
+    return single ? [single] : [];
+  }
+
   function resetJoystickVisual() {
     joystickState.active = false;
     joystickState.pointerId = null;
@@ -469,15 +483,15 @@
   }
 
   controlButtons.forEach((button) => {
-    const btn = button.dataset.btn;
+    const targets = getButtonTargets(button);
     const press = () => {
       button.classList.add("active");
-      updateLocalButton(btn, "touch", true);
+      targets.forEach((btn) => updateLocalButton(btn, "touch", true));
       if (navigator.vibrate) navigator.vibrate(10);
     };
     const release = () => {
       button.classList.remove("active");
-      updateLocalButton(btn, "touch", false);
+      targets.forEach((btn) => updateLocalButton(btn, "touch", false));
     };
 
     button.addEventListener("pointerdown", (event) => {

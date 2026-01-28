@@ -7,7 +7,7 @@
   const video = document.querySelector("#screen");
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
-  const controlButtons = Array.from(document.querySelectorAll("[data-btn]"));
+  const controlButtons = Array.from(document.querySelectorAll("[data-btn], [data-combo]"));
   const joystickBase = document.querySelector("#joystick-base");
   const joystickKnob = document.querySelector("#joystick-knob");
 
@@ -140,6 +140,18 @@
     resetGamepadState();
     resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
+  }
+
+  function getButtonTargets(button) {
+    const combo = button.dataset.combo;
+    if (combo) {
+      return combo
+        .split(",")
+        .map((btn) => btn.trim())
+        .filter(Boolean);
+    }
+    const single = button.dataset.btn;
+    return single ? [single] : [];
   }
 
   function releaseSource(source) {
@@ -343,15 +355,15 @@
   });
 
   controlButtons.forEach((button) => {
-    const btn = button.dataset.btn;
+    const targets = getButtonTargets(button);
     const press = () => {
       button.classList.add("active");
-      updateButton(btn, "touch", true);
+      targets.forEach((btn) => updateButton(btn, "touch", true));
       haptic(12);
     };
     const release = () => {
       button.classList.remove("active");
-      updateButton(btn, "touch", false);
+      targets.forEach((btn) => updateButton(btn, "touch", false));
     };
 
     button.addEventListener("pointerdown", (event) => {

@@ -23,8 +23,16 @@ body {
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(1200px 800px at 10% -10%, rgba(58, 208, 143, 0.15), transparent),
-    radial-gradient(900px 700px at 110% 10%, rgba(244, 197, 66, 0.12), transparent),
+    radial-gradient(
+      1200px 800px at 10% -10%,
+      rgba(58, 208, 143, 0.15),
+      transparent
+    ),
+    radial-gradient(
+      900px 700px at 110% 10%,
+      rgba(244, 197, 66, 0.12),
+      transparent
+    ),
     linear-gradient(180deg, var(--bg-0), var(--bg-1));
   min-height: 100vh;
 }
@@ -334,11 +342,12 @@ video {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
-    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  padding: calc(16px + env(safe-area-inset-top))
+    calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
   pointer-events: none;
 }
-
 
 .fullscreen-btn {
   position: absolute;
@@ -359,9 +368,15 @@ video {
   width: 190px;
   height: 190px;
   border-radius: 50%;
-  background: radial-gradient(circle at 40% 40%, rgba(244, 197, 66, 0.08), rgba(8, 18, 14, 0.95));
+  background: radial-gradient(
+    circle at 40% 40%,
+    rgba(244, 197, 66, 0.08),
+    rgba(8, 18, 14, 0.95)
+  );
   border: 1px solid rgba(244, 197, 66, 0.35);
-  box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.6), 0 10px 22px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    inset 0 0 16px rgba(0, 0, 0, 0.6),
+    0 10px 22px rgba(0, 0, 0, 0.25);
   position: relative;
   pointer-events: auto;
   touch-action: none;
@@ -382,7 +397,11 @@ video {
   width: 74px;
   height: 74px;
   border-radius: 50%;
-  background: linear-gradient(160deg, rgba(58, 208, 143, 0.85), rgba(11, 23, 18, 0.95));
+  background: linear-gradient(
+    160deg,
+    rgba(58, 208, 143, 0.85),
+    rgba(11, 23, 18, 0.95)
+  );
   border: 1px solid rgba(58, 208, 143, 0.6);
   box-shadow: 0 12px 20px rgba(0, 0, 0, 0.35);
   transform: translate(0, 0);
@@ -414,6 +433,8 @@ video {
   user-select: none;
   touch-action: none;
   pointer-events: auto;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .control.small {
@@ -428,10 +449,35 @@ video {
   font-size: 16px;
 }
 
+.control.combo {
+  min-width: 120px;
+  letter-spacing: 0.08em;
+}
+
 .control.active {
   background: var(--accent-2);
   color: #0b1712;
   box-shadow: 0 8px 20px rgba(58, 208, 143, 0.2);
+}
+
+.control:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(244, 197, 66, 0.45);
+}
+
+.control:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(244, 197, 66, 0.45);
+}
+
+.button:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 footer {
@@ -491,6 +537,10 @@ footer {
 
   .control.small {
     min-width: 72px;
+  }
+
+  .control.combo {
+    min-width: 100px;
   }
 }
 
