@@ -8,6 +8,8 @@
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
   const controlButtons = Array.from(document.querySelectorAll("[data-btn]"));
+  const joystickBase = document.querySelector("#joystick-base");
+  const joystickKnob = document.querySelector("#joystick-knob");
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -48,6 +50,13 @@
   const gamepadButtons = {};
   const axisState = { left: false, right: false, up: false, down: false };
   const pressedSources = new Map();
+  const joystickState = {
+    active: false,
+    pointerId: null,
+    centerX: 0,
+    centerY: 0,
+    radius: 0,
+  };
 
   function setPill(el, text, warn = false) {
     el.textContent = text;
@@ -129,6 +138,7 @@
     }
     pressedSources.clear();
     resetGamepadState();
+    resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
   }
 
@@ -153,6 +163,54 @@
     axisState.right = false;
     axisState.up = false;
     axisState.down = false;
+  }
+
+  function resetJoystickVisual() {
+    joystickState.active = false;
+    joystickState.pointerId = null;
+    if (joystickKnob) {
+      joystickKnob.style.transform = "translate(0, 0)";
+    }
+  }
+
+  function updateJoystickDirection(x, y) {
+    const radius = joystickState.radius || 1;
+    const deadZone = radius * 0.2;
+    const axisThreshold = 0.35;
+    const distance = Math.hypot(x, y);
+    const normX = distance < deadZone ? 0 : x / radius;
+    const normY = distance < deadZone ? 0 : y / radius;
+    updateButton("LEFT", "joystick", normX < -axisThreshold);
+    updateButton("RIGHT", "joystick", normX > axisThreshold);
+    updateButton("UP", "joystick", normY < -axisThreshold);
+    updateButton("DOWN", "joystick", normY > axisThreshold);
+  }
+
+  function handleJoystickMove(event) {
+    if (!joystickBase || !joystickKnob) return;
+    if (!joystickState.active || event.pointerId !== joystickState.pointerId) return;
+    const dx = event.clientX - joystickState.centerX;
+    const dy = event.clientY - joystickState.centerY;
+    const radius = joystickState.radius || 1;
+    const distance = Math.hypot(dx, dy);
+    let clampedX = dx;
+    let clampedY = dy;
+    if (distance > radius) {
+      const scale = radius / distance;
+      clampedX *= scale;
+      clampedY *= scale;
+    }
+    joystickKnob.style.transform = `translate(${clampedX}px, ${clampedY}px)`;
+    updateJoystickDirection(clampedX, clampedY);
+  }
+
+  function releaseJoystick() {
+    if (!joystickState.active) return;
+    updateButton("LEFT", "joystick", false);
+    updateButton("RIGHT", "joystick", false);
+    updateButton("UP", "joystick", false);
+    updateButton("DOWN", "joystick", false);
+    resetJoystickVisual();
   }
 
   function syncPressed() {
@@ -305,6 +363,26 @@
     button.addEventListener("pointercancel", release);
     button.addEventListener("pointerleave", release);
   });
+
+  if (joystickBase && joystickKnob) {
+    joystickBase.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      const rect = joystickBase.getBoundingClientRect();
+      const knobRect = joystickKnob.getBoundingClientRect();
+      joystickState.centerX = rect.left + rect.width / 2;
+      joystickState.centerY = rect.top + rect.height / 2;
+      joystickState.radius = Math.max(0, rect.width / 2 - knobRect.width / 2);
+      joystickState.active = true;
+      joystickState.pointerId = event.pointerId;
+      joystickBase.setPointerCapture(event.pointerId);
+      handleJoystickMove(event);
+      haptic(10);
+    });
+
+    joystickBase.addEventListener("pointermove", handleJoystickMove);
+    joystickBase.addEventListener("pointerup", releaseJoystick);
+    joystickBase.addEventListener("pointercancel", releaseJoystick);
+  }
 
   function pollGamepad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];

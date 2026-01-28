@@ -9,6 +9,8 @@
   const peerIdEl = document.querySelector("#peer-id");
   const copyIdBtn = document.querySelector("#copy-id");
   const controlButtons = Array.from(document.querySelectorAll(".host-overlay [data-btn]"));
+  const joystickBase = document.querySelector("#joystick-base");
+  const joystickKnob = document.querySelector("#joystick-knob");
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
   const qualitySelect = document.querySelector("#quality");
@@ -70,6 +72,13 @@
   let canvasStream = null;
   const localSources = new Map();
   const remotePressed = new Set();
+  const joystickState = {
+    active: false,
+    pointerId: null,
+    centerX: 0,
+    centerY: 0,
+    radius: 0,
+  };
 
   function setPill(el, text, warn = false) {
     el.textContent = text;
@@ -197,6 +206,7 @@
       if (nesBtn !== undefined && nes) nes.buttonUp(1, nesBtn);
     }
     localSources.clear();
+    resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
   }
 
@@ -257,6 +267,54 @@
       setPill(streamStatus, "Stream: restarting");
       startMediaCall(dataConn.peer);
     }
+  }
+
+  function resetJoystickVisual() {
+    joystickState.active = false;
+    joystickState.pointerId = null;
+    if (joystickKnob) {
+      joystickKnob.style.transform = "translate(0, 0)";
+    }
+  }
+
+  function updateJoystickDirection(x, y) {
+    const radius = joystickState.radius || 1;
+    const deadZone = radius * 0.2;
+    const axisThreshold = 0.35;
+    const distance = Math.hypot(x, y);
+    const normX = distance < deadZone ? 0 : x / radius;
+    const normY = distance < deadZone ? 0 : y / radius;
+    updateLocalButton("LEFT", "joystick", normX < -axisThreshold);
+    updateLocalButton("RIGHT", "joystick", normX > axisThreshold);
+    updateLocalButton("UP", "joystick", normY < -axisThreshold);
+    updateLocalButton("DOWN", "joystick", normY > axisThreshold);
+  }
+
+  function handleJoystickMove(event) {
+    if (!joystickBase || !joystickKnob) return;
+    if (!joystickState.active || event.pointerId !== joystickState.pointerId) return;
+    const dx = event.clientX - joystickState.centerX;
+    const dy = event.clientY - joystickState.centerY;
+    const radius = joystickState.radius || 1;
+    const distance = Math.hypot(dx, dy);
+    let clampedX = dx;
+    let clampedY = dy;
+    if (distance > radius) {
+      const scale = radius / distance;
+      clampedX *= scale;
+      clampedY *= scale;
+    }
+    joystickKnob.style.transform = `translate(${clampedX}px, ${clampedY}px)`;
+    updateJoystickDirection(clampedX, clampedY);
+  }
+
+  function releaseJoystick() {
+    if (!joystickState.active) return;
+    updateLocalButton("LEFT", "joystick", false);
+    updateLocalButton("RIGHT", "joystick", false);
+    updateLocalButton("UP", "joystick", false);
+    updateLocalButton("DOWN", "joystick", false);
+    resetJoystickVisual();
   }
 
   function handleDataConnection(conn) {
@@ -431,6 +489,26 @@
     button.addEventListener("pointercancel", release);
     button.addEventListener("pointerleave", release);
   });
+
+  if (joystickBase && joystickKnob) {
+    joystickBase.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      const rect = joystickBase.getBoundingClientRect();
+      const knobRect = joystickKnob.getBoundingClientRect();
+      joystickState.centerX = rect.left + rect.width / 2;
+      joystickState.centerY = rect.top + rect.height / 2;
+      joystickState.radius = Math.max(0, rect.width / 2 - knobRect.width / 2);
+      joystickState.active = true;
+      joystickState.pointerId = event.pointerId;
+      joystickBase.setPointerCapture(event.pointerId);
+      handleJoystickMove(event);
+      if (navigator.vibrate) navigator.vibrate(10);
+    });
+
+    joystickBase.addEventListener("pointermove", handleJoystickMove);
+    joystickBase.addEventListener("pointerup", releaseJoystick);
+    joystickBase.addEventListener("pointercancel", releaseJoystick);
+  }
 
   romInput.addEventListener("change", async (event) => {
     const file = event.target.files[0];
