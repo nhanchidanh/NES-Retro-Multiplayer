@@ -1,6 +1,18 @@
 (() => {
-  const wsStatus = document.querySelector("#ws-status");
+  const peerStatus = document.querySelector("#peer-status");
   const hostStatus = document.querySelector("#host-status");
+  const streamStatus = document.querySelector("#stream-status");
+  const hostIdInput = document.querySelector("#host-id");
+  const connectBtn = document.querySelector("#connect-btn");
+  const video = document.querySelector("#screen");
+  const controlButtons = Array.from(document.querySelectorAll("[data-btn]"));
+
+  const STUN_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+  ];
 
   const KEY_MAP = {
     ArrowUp: "UP",
@@ -14,10 +26,24 @@
     ShiftRight: "SELECT",
   };
 
-  let ws = null;
-  const pressed = new Set();
-  let retryMs = 800;
-  let reconnectTimer = null;
+  const GAMEPAD_BUTTON_MAP = {
+    0: "A",
+    1: "B",
+    8: "SELECT",
+    9: "START",
+    12: "UP",
+    13: "DOWN",
+    14: "LEFT",
+    15: "RIGHT",
+  };
+
+  let peer = null;
+  let dataConn = null;
+  let mediaCall = null;
+  let gamepadIndex = null;
+  const gamepadButtons = {};
+  const axisState = { left: false, right: false, up: false, down: false };
+  const pressedSources = new Map();
 
   function setPill(el, text, warn = false) {
     el.textContent = text;
@@ -29,68 +55,157 @@
   }
 
   function sendInput(btn, pressedState) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: "input", btn, pressed: pressedState }));
+    if (!dataConn || !dataConn.open) return;
+    dataConn.send({ type: "input", btn, pressed: pressedState });
+  }
+
+  function updateButton(btn, source, pressed) {
+    if (!btn) return;
+    const sources = pressedSources.get(btn) || new Set();
+    const hadPressed = sources.size > 0;
+    if (pressed) {
+      sources.add(source);
+    } else {
+      sources.delete(source);
+    }
+    if (sources.size === 0) {
+      pressedSources.delete(btn);
+    } else {
+      pressedSources.set(btn, sources);
+    }
+    const hasPressed = sources.size > 0;
+    if (hadPressed !== hasPressed) {
+      sendInput(btn, hasPressed);
+    }
   }
 
   function releaseAll() {
-    for (const code of pressed) {
-      const btn = KEY_MAP[code];
-      if (btn) sendInput(btn, false);
+    for (const btn of pressedSources.keys()) {
+      sendInput(btn, false);
     }
-    pressed.clear();
+    pressedSources.clear();
+    resetGamepadState();
+    controlButtons.forEach((btn) => btn.classList.remove("active"));
   }
 
-  function connectWs() {
-    const wsUrl = location.origin.replace(/^http/, "ws");
-    ws = new WebSocket(wsUrl);
-
-    ws.addEventListener("open", () => {
-      setPill(wsStatus, "WS: connected");
-      retryMs = 800;
-      ws.send(JSON.stringify({ type: "role", role: "guest" }));
-    });
-
-    ws.addEventListener("close", () => {
-      setPill(wsStatus, "WS: disconnected", true);
-      setPill(hostStatus, "Host: offline", true);
-      scheduleReconnect();
-    });
-
-    ws.addEventListener("error", () => {
-      if (ws.readyState === WebSocket.OPEN) return;
-      ws.close();
-    });
-
-    ws.addEventListener("message", (event) => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
+  function releaseSource(source) {
+    for (const [btn, sources] of pressedSources.entries()) {
+      if (!sources.has(source)) continue;
+      sources.delete(source);
+      const hasPressed = sources.size > 0;
+      if (!hasPressed) {
+        pressedSources.delete(btn);
       }
+      sendInput(btn, hasPressed);
+    }
+    if (source === "gamepad") resetGamepadState();
+  }
 
-      if (msg.type === "status") {
-        if (msg.message === "host_ready") {
-          setPill(hostStatus, "Host: ready");
-        }
-        if (msg.message === "waiting_host") {
-          setPill(hostStatus, "Host: waiting", true);
-        }
-        if (msg.message === "host_left") {
-          setPill(hostStatus, "Host: offline", true);
-        }
-      }
+  function resetGamepadState() {
+    Object.keys(gamepadButtons).forEach((key) => {
+      delete gamepadButtons[key];
+    });
+    axisState.left = false;
+    axisState.right = false;
+    axisState.up = false;
+    axisState.down = false;
+  }
+
+  function syncPressed() {
+    for (const btn of pressedSources.keys()) {
+      sendInput(btn, true);
+    }
+  }
+
+  function cleanupMedia() {
+    if (mediaCall) {
+      mediaCall.close();
+      mediaCall = null;
+    }
+    video.srcObject = null;
+  }
+
+  function handleCall(call) {
+    cleanupMedia();
+    mediaCall = call;
+    setPill(streamStatus, "Stream: connecting");
+    call.answer();
+    call.on("stream", (stream) => {
+      video.srcObject = stream;
+      setPill(streamStatus, "Stream: live");
+    });
+    call.on("close", () => {
+      setPill(streamStatus, "Stream: closed", true);
+      video.srcObject = null;
+    });
+    call.on("error", (err) => {
+      setPill(streamStatus, "Stream: error", true);
+      console.error(err);
     });
   }
 
-  function scheduleReconnect() {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connectWs();
-      retryMs = Math.min(retryMs * 1.6, 8000);
-    }, retryMs);
+  function setupPeer() {
+    setPill(peerStatus, "Peer: connecting...");
+    peer = new Peer({
+      debug: 2,
+      config: {
+        iceServers: STUN_SERVERS,
+      },
+    });
+
+    peer.on("open", (id) => {
+      setPill(peerStatus, `Peer: ${id}`);
+    });
+
+    peer.on("call", handleCall);
+
+    peer.on("disconnected", () => {
+      setPill(peerStatus, "Peer: disconnected", true);
+      peer.reconnect();
+    });
+
+    peer.on("error", (err) => {
+      setPill(peerStatus, "Peer: error", true);
+      console.error(err);
+    });
+  }
+
+  function connectToHost() {
+    const hostId = hostIdInput.value.trim();
+    if (!hostId || !peer) {
+      hostIdInput.focus();
+      return;
+    }
+    if (dataConn) dataConn.close();
+    setPill(hostStatus, "Host: connecting...");
+    setPill(streamStatus, "Stream: waiting");
+    dataConn = peer.connect(hostId, {
+      reliable: false,
+      metadata: { role: "guest" },
+    });
+
+    dataConn.on("open", () => {
+      setPill(hostStatus, `Host: ${hostId}`);
+      syncPressed();
+    });
+
+    dataConn.on("data", (msg) => {
+      if (msg && msg.type === "host_ready") {
+        setPill(hostStatus, `Host: ${hostId}`);
+      }
+    });
+
+    dataConn.on("close", () => {
+      setPill(hostStatus, "Host: disconnected", true);
+      setPill(streamStatus, "Stream: idle", true);
+      releaseAll();
+      cleanupMedia();
+    });
+
+    dataConn.on("error", (err) => {
+      setPill(hostStatus, "Host: error", true);
+      console.error(err);
+    });
   }
 
   window.addEventListener("keydown", (event) => {
@@ -98,16 +213,14 @@
     const btn = KEY_MAP[event.code];
     if (!btn) return;
     event.preventDefault();
-    pressed.add(event.code);
-    sendInput(btn, true);
+    updateButton(btn, "keyboard", true);
   });
 
   window.addEventListener("keyup", (event) => {
     const btn = KEY_MAP[event.code];
     if (!btn) return;
     event.preventDefault();
-    pressed.delete(event.code);
-    sendInput(btn, false);
+    updateButton(btn, "keyboard", false);
   });
 
   window.addEventListener("blur", () => {
@@ -118,5 +231,92 @@
     if (document.hidden) releaseAll();
   });
 
-  connectWs();
+  controlButtons.forEach((button) => {
+    const btn = button.dataset.btn;
+    const press = () => {
+      button.classList.add("active");
+      updateButton(btn, "touch", true);
+    };
+    const release = () => {
+      button.classList.remove("active");
+      updateButton(btn, "touch", false);
+    };
+
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      press();
+    });
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("pointerleave", release);
+  });
+
+  function pollGamepad() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let pad = null;
+    if (gamepadIndex !== null && pads[gamepadIndex]) {
+      pad = pads[gamepadIndex];
+    } else {
+      pad = pads.find((candidate) => candidate && candidate.connected) || null;
+    }
+
+    if (!pad) {
+      gamepadIndex = null;
+      requestAnimationFrame(pollGamepad);
+      return;
+    }
+
+    gamepadIndex = pad.index;
+
+    Object.entries(GAMEPAD_BUTTON_MAP).forEach(([index, btn]) => {
+      const pressed = Boolean(pad.buttons[index]?.pressed);
+      if (gamepadButtons[index] !== pressed) {
+        gamepadButtons[index] = pressed;
+        updateButton(btn, "gamepad", pressed);
+      }
+    });
+
+    const axisX = pad.axes[0] || 0;
+    const axisY = pad.axes[1] || 0;
+    const left = axisX < -0.5;
+    const right = axisX > 0.5;
+    const up = axisY < -0.5;
+    const down = axisY > 0.5;
+
+    if (left !== axisState.left) {
+      axisState.left = left;
+      updateButton("LEFT", "gamepad", left);
+    }
+    if (right !== axisState.right) {
+      axisState.right = right;
+      updateButton("RIGHT", "gamepad", right);
+    }
+    if (up !== axisState.up) {
+      axisState.up = up;
+      updateButton("UP", "gamepad", up);
+    }
+    if (down !== axisState.down) {
+      axisState.down = down;
+      updateButton("DOWN", "gamepad", down);
+    }
+
+    requestAnimationFrame(pollGamepad);
+  }
+
+  window.addEventListener("gamepaddisconnected", () => {
+    releaseSource("gamepad");
+    gamepadIndex = null;
+  });
+
+  connectBtn.addEventListener("click", () => {
+    connectToHost();
+  });
+
+  hostIdInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") connectToHost();
+  });
+
+  setupPeer();
+  requestAnimationFrame(pollGamepad);
 })();

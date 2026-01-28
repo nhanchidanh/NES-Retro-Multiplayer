@@ -10,22 +10,52 @@
     <div class="wrap">
       <header>
         <h1>Guest Controller</h1>
-        <p>Send only key input to the host. No emulator or ROM required.</p>
+        <p>Connect to the host by Peer ID, watch the live stream, and send Player 2 input.</p>
       </header>
 
       <section class="panel">
         <div class="status">
-          <span class="pill" id="ws-status">WS: connecting...</span>
-          <span class="pill" id="host-status">Host: unknown</span>
+          <span class="pill" id="peer-status">Peer: connecting...</span>
+          <span class="pill" id="host-status">Host: not connected</span>
+          <span class="pill" id="stream-status">Stream: idle</span>
         </div>
 
         <div class="controls">
+          <label for="host-id">Host Peer ID</label>
+          <div class="inline">
+            <input id="host-id" type="text" placeholder="Paste host ID" autocomplete="off" />
+            <button class="button" id="connect-btn" type="button">Connect</button>
+          </div>
           <span>Keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Keep this page focused while playing.</span>
+          <span>Gamepad: standard layout supported. Touch controls below for mobile.</span>
+        </div>
+
+        <div class="screen-wrap">
+          <video id="screen" playsinline autoplay muted></video>
+        </div>
+
+        <div class="touch-controls">
+          <div class="dpad">
+            <button class="control up" data-btn="UP" type="button">▲</button>
+            <button class="control left" data-btn="LEFT" type="button">◀</button>
+            <button class="control right" data-btn="RIGHT" type="button">▶</button>
+            <button class="control down" data-btn="DOWN" type="button">▼</button>
+          </div>
+          <div class="actions">
+            <div class="action-row">
+              <button class="control action" data-btn="B" type="button">B</button>
+              <button class="control action" data-btn="A" type="button">A</button>
+            </div>
+            <div class="action-row">
+              <button class="control small" data-btn="SELECT" type="button">Select</button>
+              <button class="control small" data-btn="START" type="button">Start</button>
+            </div>
+          </div>
         </div>
       </section>
     </div>
 
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="guest.js" defer></script>
   </body>
 </html>

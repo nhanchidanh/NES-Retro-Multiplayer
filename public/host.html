@@ -10,21 +10,31 @@
     <div class="wrap">
       <header>
         <h1>Host Console</h1>
-        <p>Load a .nes ROM locally, play with Player 1 keyboard, and relay Player 2 input.</p>
+        <p>Run jsnes locally, stream the canvas via WebRTC, and receive Player 2 input in real time.</p>
       </header>
 
       <section class="panel">
         <div class="status">
-          <span class="pill" id="ws-status">WS: connecting...</span>
+          <span class="pill" id="peer-status">Peer: connecting...</span>
           <span class="pill" id="guest-status">Guest: waiting</span>
+          <span class="pill" id="stream-status">Stream: idle</span>
           <span class="pill" id="rom-status">ROM: none</span>
         </div>
 
         <div class="controls">
           <label for="rom-input">Local ROM (.nes)</label>
           <input id="rom-input" type="file" accept=".nes" />
+
+          <div class="peer-box">
+            <div>
+              <label>Host Peer ID</label>
+              <div class="peer-id" id="peer-id">waiting...</div>
+            </div>
+            <button class="button secondary" id="copy-id" type="button" disabled>Copy ID</button>
+          </div>
+
           <span>Player 1 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Player 2 keys: same mapping from guest page.</span>
+          <span>Share the Peer ID with the guest to connect.</span>
         </div>
 
         <div class="screen-wrap">
@@ -34,6 +44,7 @@
     </div>
 
     <script src="https://unpkg.com/jsnes/dist/jsnes.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="host.js" defer></script>
   </body>
 </html>

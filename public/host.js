@@ -1,10 +1,20 @@
 (() => {
-  const wsStatus = document.querySelector("#ws-status");
+  const peerStatus = document.querySelector("#peer-status");
   const guestStatus = document.querySelector("#guest-status");
+  const streamStatus = document.querySelector("#stream-status");
   const romStatus = document.querySelector("#rom-status");
   const romInput = document.querySelector("#rom-input");
   const canvas = document.querySelector("#screen");
   const ctx = canvas.getContext("2d", { alpha: false });
+  const peerIdEl = document.querySelector("#peer-id");
+  const copyIdBtn = document.querySelector("#copy-id");
+
+  const STUN_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+  ];
 
   const NES_BUTTONS = {
     A: jsnes.Controller.BUTTON_A,
@@ -33,12 +43,13 @@
   const frameBufferU32 = new Uint32Array(imageData.data.buffer);
 
   let running = false;
-  let ws = null;
   let nes = null;
+  let peer = null;
+  let dataConn = null;
+  let mediaCall = null;
+  let canvasStream = null;
   const localPressed = new Set();
   const remotePressed = new Set();
-  let retryMs = 800;
-  let reconnectTimer = null;
 
   function setPill(el, text, warn = false) {
     el.textContent = text;
@@ -95,7 +106,7 @@
 
   function applyLocalInput(code, pressed) {
     const btnName = KEY_MAP[code];
-    if (!btnName) return;
+    if (!btnName || !nes) return;
     const nesBtn = NES_BUTTONS[btnName];
     if (pressed) {
       nes.buttonDown(1, nesBtn);
@@ -107,6 +118,7 @@
   }
 
   function applyRemoteInput(btnName, pressed) {
+    if (!nes) return;
     const nesBtn = NES_BUTTONS[btnName];
     if (nesBtn === undefined) return;
     if (pressed) {
@@ -123,7 +135,7 @@
   function releaseAllRemote() {
     for (const btnName of remotePressed) {
       const nesBtn = NES_BUTTONS[btnName];
-      if (nesBtn !== undefined) nes.buttonUp(2, nesBtn);
+      if (nesBtn !== undefined && nes) nes.buttonUp(2, nesBtn);
     }
     remotePressed.clear();
   }
@@ -131,68 +143,149 @@
   function releaseAllLocal() {
     for (const code of localPressed) {
       const btnName = KEY_MAP[code];
-      if (!btnName) continue;
+      if (!btnName || !nes) continue;
       const nesBtn = NES_BUTTONS[btnName];
       nes.buttonUp(1, nesBtn);
     }
     localPressed.clear();
   }
 
-  function connectWs() {
-    const wsUrl = location.origin.replace(/^http/, "ws");
-    ws = new WebSocket(wsUrl);
+  function ensureCanvasStream() {
+    if (canvasStream) return canvasStream;
+    if (!canvas.captureStream) {
+      setPill(streamStatus, "Stream: unsupported", true);
+      return null;
+    }
+    canvasStream = canvas.captureStream(60);
+    const [track] = canvasStream.getVideoTracks();
+    if (track) track.contentHint = "detail";
+    return canvasStream;
+  }
 
-    ws.addEventListener("open", () => {
-      setPill(wsStatus, "WS: connected");
-      retryMs = 800;
-      ws.send(JSON.stringify({ type: "role", role: "host" }));
+  function stopMediaCall() {
+    if (mediaCall) {
+      mediaCall.close();
+      mediaCall = null;
+    }
+  }
+
+  function startMediaCall(guestId) {
+    const stream = ensureCanvasStream();
+    if (!stream || !peer) return;
+    stopMediaCall();
+    try {
+      mediaCall = peer.call(guestId, stream, { metadata: { role: "host" } });
+    } catch (err) {
+      setPill(streamStatus, "Stream: failed", true);
+      console.error(err);
+      return;
+    }
+    if (!mediaCall) {
+      setPill(streamStatus, "Stream: failed", true);
+      return;
+    }
+    setPill(streamStatus, "Stream: live");
+    mediaCall.on("close", () => {
+      setPill(streamStatus, "Stream: closed", true);
+    });
+    mediaCall.on("error", (err) => {
+      setPill(streamStatus, "Stream: error", true);
+      console.error(err);
+    });
+  }
+
+  function handleDataConnection(conn) {
+    if (dataConn && dataConn.open) {
+      dataConn.close();
+    }
+    dataConn = conn;
+    setPill(guestStatus, "Guest: connecting...");
+
+    conn.on("open", () => {
+      setPill(guestStatus, `Guest: ${conn.peer}`);
+      setPill(streamStatus, "Stream: starting");
+      startMediaCall(conn.peer);
     });
 
-    ws.addEventListener("close", () => {
-      setPill(wsStatus, "WS: disconnected", true);
+    conn.on("data", (msg) => {
+      if (!msg || msg.type !== "input") return;
+      applyRemoteInput(msg.btn, msg.pressed);
+    });
+
+    conn.on("close", () => {
       setPill(guestStatus, "Guest: waiting", true);
+      setPill(streamStatus, "Stream: idle");
       releaseAllRemote();
-      scheduleReconnect();
+      stopMediaCall();
     });
 
-    ws.addEventListener("error", () => {
-      if (ws.readyState === WebSocket.OPEN) return;
-      ws.close();
-    });
-
-    ws.addEventListener("message", (event) => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-
-      if (msg.type === "input") {
-        applyRemoteInput(msg.btn, msg.pressed);
-        return;
-      }
-
-      if (msg.type === "guest_joined") {
-        setPill(guestStatus, "Guest: connected");
-        releaseAllRemote();
-      }
-
-      if (msg.type === "guest_left") {
-        setPill(guestStatus, "Guest: waiting", true);
-        releaseAllRemote();
-      }
+    conn.on("error", (err) => {
+      setPill(guestStatus, "Guest: error", true);
+      setPill(streamStatus, "Stream: error", true);
+      console.error(err);
     });
   }
 
-  function scheduleReconnect() {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connectWs();
-      retryMs = Math.min(retryMs * 1.6, 8000);
-    }, retryMs);
+  function setupPeer() {
+    setPill(peerStatus, "Peer: connecting...");
+    peer = new Peer({
+      debug: 2,
+      config: {
+        iceServers: STUN_SERVERS,
+      },
+    });
+
+    peer.on("open", (id) => {
+      peerIdEl.textContent = id;
+      setPill(peerStatus, `Peer: ${id}`);
+      copyIdBtn.disabled = false;
+    });
+
+    peer.on("connection", handleDataConnection);
+
+    peer.on("call", (call) => {
+      const stream = ensureCanvasStream();
+      if (!stream) {
+        call.close();
+        return;
+      }
+      stopMediaCall();
+      mediaCall = call;
+      setPill(streamStatus, "Stream: answering");
+      call.answer(stream);
+      call.on("close", () => {
+        setPill(streamStatus, "Stream: closed", true);
+      });
+      call.on("error", (err) => {
+        setPill(streamStatus, "Stream: error", true);
+        console.error(err);
+      });
+    });
+
+    peer.on("disconnected", () => {
+      setPill(peerStatus, "Peer: disconnected", true);
+      peer.reconnect();
+    });
+
+    peer.on("error", (err) => {
+      setPill(peerStatus, "Peer: error", true);
+      console.error(err);
+    });
   }
+
+  copyIdBtn.addEventListener("click", async () => {
+    const id = peerIdEl.textContent.trim();
+    if (!id || id === "waiting...") return;
+    try {
+      await navigator.clipboard.writeText(id);
+      copyIdBtn.textContent = "Copied";
+      setTimeout(() => {
+        copyIdBtn.textContent = "Copy ID";
+      }, 1500);
+    } catch {
+      window.prompt("Copy Peer ID:", id);
+    }
+  });
 
   window.addEventListener("keydown", (event) => {
     if (event.repeat) return;
@@ -229,6 +322,9 @@
     }
   });
 
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   initNes();
-  connectWs();
+  ensureCanvasStream();
+  setupPeer();
 })();

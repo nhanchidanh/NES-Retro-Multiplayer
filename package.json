@@ -2,12 +2,10 @@
   "name": "game-nes",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal NES emulator host + guest input relay using raw WebSocket.",
+  "description": "NES emulator host + guest input relay using PeerJS WebRTC.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "dependencies": {
-    "ws": "^8.16.0"
-  }
+  "dependencies": {}
 }

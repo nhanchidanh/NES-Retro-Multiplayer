@@ -1,15 +1,15 @@
-# NES Retro Multiplayer (Host + Guest Input Relay)
+# NES Retro Multiplayer (Host Stream + Guest Input)
 
-This project runs a jsnes emulator on the host and relays only Player 2 key input via raw WebSocket.
+This project runs a jsnes emulator on the host, streams the canvas via WebRTC, and relays Player 2 input over a PeerJS data channel.
 
 ## Features
 - Host runs jsnes and renders to a 256x240 canvas.
-- Guest only sends key input events (no emulator, no ROM).
-- Raw WebSocket relay server (no Socket.IO).
+- Guest only sends input events (keyboard / touch / gamepad). No emulator, no ROM.
+- WebRTC media stream for video, data channel for input (no Socket.IO).
 - ROM stays on the host machine (local file upload).
 
 ## Requirements
-- Node.js 18+ (or any recent Node version that supports WebSocket libraries)
+- Any static web server (Node.js 18+ included in this repo).
 
 ## Setup
 ```bash
@@ -29,5 +29,6 @@ Open the host and guest pages:
 - Shift: Select
 
 ## Notes
-- The emulator library is loaded from a CDN (jsnes). If you need offline usage, download jsnes and serve it locally.
+- The emulator library and PeerJS are loaded from CDNs. For offline use, download them and serve locally.
 - This is input-only sync (no rollback, no state sync, no frame sync).
+- PeerJS uses a signaling server for initial connection; after that the connection is P2P.

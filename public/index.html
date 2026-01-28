@@ -11,8 +11,8 @@
       <header>
         <h1>NES Retro Multiplayer</h1>
         <p>
-          Host runs the emulator and renders the game. Guest sends only key input
-          over a raw WebSocket. No ROMs are uploaded to the server.
+          Host runs the emulator, renders the game, and streams the canvas over WebRTC.
+          Guest sends only input over a PeerJS data channel. No ROMs are uploaded anywhere.
         </p>
       </header>
 
@@ -24,13 +24,13 @@
         </article>
         <article class="card">
           <h3>Guest (Player 2)</h3>
-          <p>Use your keyboard as the second controller. No emulator needed.</p>
+          <p>Use keyboard, touch, or a controller as the second player. No emulator needed.</p>
           <a class="button" href="guest.html">Open Guest</a>
         </article>
       </section>
 
       <footer>
-        <p>Tip: share the host server address with the guest (same URL, /guest.html).</p>
+        <p>Tip: share the Host Peer ID with the guest (open /guest.html).</p>
       </footer>
     </div>
   </body>
