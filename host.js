@@ -11,11 +11,19 @@
   const controlButtons = Array.from(document.querySelectorAll(".host-overlay [data-btn]"));
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
+  const qualitySelect = document.querySelector("#quality");
   const NES_WIDTH = 256;
   const NES_HEIGHT = 240;
-  const SCALE = 3;
-  const OUTPUT_WIDTH = NES_WIDTH * SCALE;
-  const OUTPUT_HEIGHT = NES_HEIGHT * SCALE;
+  const QUALITY_PRESETS = {
+    low: { scale: 2, fps: 30 },
+    balanced: { scale: 3, fps: 30 },
+    high: { scale: 3, fps: 60 },
+  };
+  const DEFAULT_QUALITY = "low";
+  let scale = QUALITY_PRESETS[DEFAULT_QUALITY].scale;
+  let streamFps = QUALITY_PRESETS[DEFAULT_QUALITY].fps;
+  let outputWidth = NES_WIDTH * scale;
+  let outputHeight = NES_HEIGHT * scale;
 
   const STUN_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -72,6 +80,17 @@
     }
   }
 
+  function updateOutputSize() {
+    outputWidth = NES_WIDTH * scale;
+    outputHeight = NES_HEIGHT * scale;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    ctx.imageSmoothingEnabled = false;
+    baseCtx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
   function initNes() {
     nes = new jsnes.NES({
       onFrame(framebuffer) {
@@ -79,7 +98,7 @@
           frameBufferU32[i] = 0xff000000 | framebuffer[i];
         }
         baseCtx.putImageData(imageData, 0, 0);
-        ctx.drawImage(baseCanvas, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+        ctx.drawImage(baseCanvas, 0, 0, outputWidth, outputHeight);
       },
       onStatusUpdate(status) {
         setPill(romStatus, `ROM: ${status}`);
@@ -187,7 +206,7 @@
       setPill(streamStatus, "Stream: unsupported", true);
       return null;
     }
-    canvasStream = canvas.captureStream(60);
+    canvasStream = canvas.captureStream(streamFps);
     const [track] = canvasStream.getVideoTracks();
     if (track) track.contentHint = "detail";
     return canvasStream;
@@ -223,6 +242,21 @@
       setPill(streamStatus, "Stream: error", true);
       console.error(err);
     });
+  }
+
+  function applyQuality(presetKey) {
+    const preset = QUALITY_PRESETS[presetKey] || QUALITY_PRESETS[DEFAULT_QUALITY];
+    scale = preset.scale;
+    streamFps = preset.fps;
+    updateOutputSize();
+    if (canvasStream) {
+      canvasStream.getTracks().forEach((track) => track.stop());
+      canvasStream = null;
+    }
+    if (dataConn && dataConn.open) {
+      setPill(streamStatus, "Stream: restarting");
+      startMediaCall(dataConn.peer);
+    }
   }
 
   function handleDataConnection(conn) {
@@ -369,6 +403,13 @@
     }
   }
 
+  if (qualitySelect) {
+    qualitySelect.value = DEFAULT_QUALITY;
+    qualitySelect.addEventListener("change", () => {
+      applyQuality(qualitySelect.value);
+    });
+  }
+
   controlButtons.forEach((button) => {
     const btn = button.dataset.btn;
     const press = () => {
@@ -409,12 +450,7 @@
     }
   });
 
-  canvas.width = OUTPUT_WIDTH;
-  canvas.height = OUTPUT_HEIGHT;
-  ctx.imageSmoothingEnabled = false;
-  baseCtx.imageSmoothingEnabled = false;
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  updateOutputSize();
   initNes();
   ensureCanvasStream();
   setupPeer();

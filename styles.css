@@ -202,6 +202,15 @@ input[type="text"] {
   min-width: 220px;
 }
 
+select {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 197, 66, 0.3);
+  background: rgba(8, 18, 14, 0.8);
+  color: var(--text);
+  min-width: 220px;
+}
+
 .screen-wrap {
   display: grid;
   place-items: center;

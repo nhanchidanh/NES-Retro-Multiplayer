@@ -25,6 +25,15 @@
           <label for="rom-input">Local ROM (.nes)</label>
           <input id="rom-input" type="file" accept=".nes" />
 
+          <label for="quality">Stream quality</label>
+          <div class="inline">
+            <select id="quality">
+              <option value="low">Low (2x, 30fps)</option>
+              <option value="balanced">Balanced (3x, 30fps)</option>
+              <option value="high">High (3x, 60fps)</option>
+            </select>
+          </div>
+
           <div class="peer-box">
             <div>
               <label>Host Peer ID</label>
