@@ -11,20 +11,20 @@
       <header>
         <h1>NES Retro Multiplayer</h1>
         <p>
-          Host runs the emulator, renders the game, and streams the canvas over WebRTC.
-          Guest sends only input over a PeerJS data channel. No ROMs are uploaded anywhere.
+          Both sides run jsnes locally and sync only input over a PeerJS data channel.
+          You can load a ROM from your device or pick from the built-in library.
         </p>
       </header>
 
       <section class="grid">
         <article class="card">
           <h3>Host (Player 1)</h3>
-          <p>Run the emulator, load a ROM from your machine, and receive Player 2 input.</p>
+          <p>Run the emulator, load a ROM locally, and sync input in lockstep.</p>
           <a class="button" href="host.html">Open Host</a>
         </article>
         <article class="card">
           <h3>Guest (Player 2)</h3>
-          <p>Use keyboard, touch, or a controller as the second player. No emulator needed.</p>
+          <p>Run the emulator locally and send Player 2 input (keyboard/touch/gamepad).</p>
           <a class="button" href="guest.html">Open Guest</a>
         </article>
       </section>

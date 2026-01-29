@@ -10,6 +10,8 @@
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
   const romInput = document.querySelector("#rom-input");
+  const librarySelect = document.querySelector("#rom-library");
+  const loadLibraryBtn = document.querySelector("#load-library");
   const controlButtons = Array.from(document.querySelectorAll("[data-btn], [data-combo]"));
   const joystickBase = document.querySelector("#joystick-base");
   const joystickKnob = document.querySelector("#joystick-knob");
@@ -315,6 +317,17 @@
   }
 
   // --- ROM loading + hash ---
+  function arrayBufferToBinary(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunk = 0x8000;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const slice = bytes.subarray(i, i + chunk);
+      binary += String.fromCharCode.apply(null, slice);
+    }
+    return binary;
+  }
+
   function loadRom(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -324,19 +337,56 @@
         reader.readAsBinaryString(file);
         return;
       }
-      reader.onload = () => {
-        const bytes = new Uint8Array(reader.result);
-        const chunk = 0x8000;
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += chunk) {
-          const slice = bytes.subarray(i, i + chunk);
-          binary += String.fromCharCode.apply(null, slice);
-        }
-        resolve(binary);
-      };
+      reader.onload = () => resolve(arrayBufferToBinary(reader.result));
       reader.onerror = () => reject(reader.error);
       reader.readAsArrayBuffer(file);
     });
+  }
+
+  function normalizeLibraryEntry(entry) {
+    if (!entry) return null;
+    if (typeof entry === "string") {
+      return { name: entry, file: entry };
+    }
+    if (typeof entry === "object" && entry.file) {
+      return { name: entry.name || entry.file, file: entry.file };
+    }
+    return null;
+  }
+
+  async function fetchLibrary() {
+    if (!librarySelect) return;
+    try {
+      const response = await fetch("roms.json", { cache: "no-store" });
+      if (!response.ok) throw new Error("roms.json not found");
+      const data = await response.json();
+      const entries = Array.isArray(data) ? data.map(normalizeLibraryEntry).filter(Boolean) : [];
+      librarySelect.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Select a game";
+      librarySelect.appendChild(placeholder);
+      entries.forEach((entry) => {
+        const option = document.createElement("option");
+        option.value = entry.file;
+        option.textContent = entry.name;
+        option.dataset.name = entry.name;
+        librarySelect.appendChild(option);
+      });
+      librarySelect.disabled = entries.length === 0;
+      if (loadLibraryBtn) loadLibraryBtn.disabled = entries.length === 0;
+    } catch (err) {
+      console.error(err);
+      if (librarySelect) {
+        librarySelect.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Library not found";
+        librarySelect.appendChild(placeholder);
+        librarySelect.disabled = true;
+      }
+      if (loadLibraryBtn) loadLibraryBtn.disabled = true;
+    }
   }
 
   function computeRomHash(binary) {
@@ -774,6 +824,33 @@
     if (event.key === "Enter") connectToHost();
   });
 
+  async function loadRomFromLibrary() {
+    if (!librarySelect) return;
+    const option = librarySelect.selectedOptions[0];
+    if (!option || !option.value) return;
+    const name = option.dataset.name || option.textContent;
+    try {
+      setPill(romStatus, `ROM: loading ${name}`);
+      const response = await fetch(encodeURI(option.value));
+      if (!response.ok) throw new Error("ROM fetch failed");
+      const buffer = await response.arrayBuffer();
+      const romData = arrayBufferToBinary(buffer);
+      const hash = computeRomHash(romData);
+      romInfoLocal = { name, size: buffer.byteLength, hash };
+      nes.loadROM(romData);
+      setPill(romStatus, `ROM: ${name}`);
+      localReady = true;
+      sendRomInfo();
+      sendReady();
+      setSyncStatus("waiting for host");
+      maybeStartSync();
+    } catch (err) {
+      setPill(romStatus, "ROM: failed", true);
+      setSyncStatus("ROM load failed", true);
+      console.error(err);
+    }
+  }
+
   romInput.addEventListener("change", async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -796,9 +873,16 @@
     }
   });
 
+  if (loadLibraryBtn) {
+    loadLibraryBtn.addEventListener("click", () => {
+      loadRomFromLibrary();
+    });
+  }
+
   setupPeer();
   updateOutputSize();
   initNes();
   setSyncStatus("waiting for ROM");
+  fetchLibrary();
   requestAnimationFrame(pollGamepad);
 })();

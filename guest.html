@@ -31,6 +31,12 @@
           <label for="rom-input">Local ROM (.nes)</label>
           <input id="rom-input" type="file" accept=".nes" />
 
+          <label for="rom-library">ROM library</label>
+          <div class="inline">
+            <select id="rom-library"></select>
+            <button class="button secondary" id="load-library" type="button">Load</button>
+          </div>
+
           <span>Player 2 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
           <span>Gamepad: standard layout supported. Touch controls below for mobile.</span>
           <span>ROM must match the host exactly. Input delay: 2 frames.</span>
