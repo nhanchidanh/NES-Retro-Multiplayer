@@ -1,0 +1,74 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Controller - NES Netplay</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Phone Controller</h1>
+        <p>Use this phone as a gamepad for the host PC (controller mode).</p>
+      </header>
+
+      <section class="panel">
+        <div class="status">
+          <span class="pill" id="peer-status">Peer: connecting...</span>
+          <span class="pill" id="host-status">Host: not connected</span>
+          <span class="pill" id="player-status">Player: ?</span>
+        </div>
+
+        <div class="controls">
+          <label for="host-id">Host Peer ID</label>
+          <div class="inline">
+            <input id="host-id" type="text" placeholder="Paste host ID" autocomplete="off" />
+            <button class="button" id="connect-btn" type="button">Connect</button>
+          </div>
+
+          <label for="player-select">Player</label>
+          <div class="inline">
+            <select id="player-select">
+              <option value="1">Player 1</option>
+              <option value="2" selected>Player 2</option>
+            </select>
+          </div>
+
+          <span>Touch controls below. Gamepad also supported.</span>
+        </div>
+
+        <div class="screen-wrap">
+          <div class="video-frame" id="video-frame">
+            <button class="button secondary fullscreen-btn" id="fullscreen-btn" type="button">
+              Fullscreen
+            </button>
+            <div class="touch-overlay" style="display: flex;">
+              <div class="dpad">
+                <div class="joystick-base" id="joystick-base" role="group" aria-label="D-pad joystick">
+                  <div class="joystick-knob" id="joystick-knob"></div>
+                </div>
+              </div>
+              <div class="actions">
+                <div class="action-row">
+                  <button class="control action" data-btn="B" type="button">B</button>
+                  <button class="control action" data-btn="A" type="button">A</button>
+                </div>
+                <div class="action-row">
+                  <button class="control action combo" data-combo="A,B" type="button">A+B</button>
+                </div>
+                <div class="action-row">
+                  <button class="control small" data-btn="SELECT" type="button">Select</button>
+                  <button class="control small" data-btn="START" type="button">Start</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="controller.js" defer></script>
+  </body>
+</html>

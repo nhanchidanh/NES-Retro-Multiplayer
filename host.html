@@ -17,6 +17,7 @@
         <div class="status">
           <span class="pill" id="peer-status">Peer: connecting...</span>
           <span class="pill" id="guest-status">Guest: waiting</span>
+          <span class="pill" id="controller-status">Controllers: 0</span>
           <span class="pill" id="rom-status">ROM: none</span>
           <span class="pill" id="sync-status">Sync: waiting for ROM</span>
         </div>
@@ -29,6 +30,14 @@
           <div class="inline">
             <select id="rom-library"></select>
             <button class="button secondary" id="load-library" type="button">Load</button>
+          </div>
+
+          <label for="mode-select">Mode</label>
+          <div class="inline">
+            <select id="mode-select">
+              <option value="netplay">Netplay (2 players)</option>
+              <option value="controller">Controller mode (phones as gamepads)</option>
+            </select>
           </div>
 
           <label for="offline-toggle">Offline mode</label>
@@ -46,8 +55,9 @@
           </div>
 
           <span>Player 1 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Both players must load the exact same ROM file before sync starts.</span>
-          <span>Input delay: 2 frames (lockstep).</span>
+          <span>Netplay requires both players to load the exact same ROM file.</span>
+          <span>Controller mode: phones connect as gamepads, host runs the game.</span>
+          <span>Input delay: 2 frames (lockstep only).</span>
         </div>
 
         <div class="screen-wrap">

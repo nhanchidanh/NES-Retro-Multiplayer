@@ -6,10 +6,12 @@
   const romInput = document.querySelector("#rom-input");
   const librarySelect = document.querySelector("#rom-library");
   const loadLibraryBtn = document.querySelector("#load-library");
+  const modeSelect = document.querySelector("#mode-select");
   const offlineToggle = document.querySelector("#offline-toggle");
   const canvas = document.querySelector("#screen");
   const ctx = canvas.getContext("2d", { alpha: false });
   const peerIdEl = document.querySelector("#peer-id");
+  const controllerStatus = document.querySelector("#controller-status");
   const copyIdBtn = document.querySelector("#copy-id");
   const controlButtons = Array.from(
     document.querySelectorAll(".host-overlay [data-btn], .host-overlay [data-combo]")
@@ -25,6 +27,7 @@
   const FRAME_MS = 1000 / 60;
   const INPUT_DELAY_FRAMES = 2;
   const MAX_SIM_STEPS = 4;
+  const MIN_PRESS_FRAMES = 4;
   const LOCAL_PLAYER = 1;
   const REMOTE_PLAYER = 2;
 
@@ -69,7 +72,8 @@
 
   let nes = null;
   let peer = null;
-  let dataConn = null;
+  let netplayConn = null;
+  const controllerConns = new Map();
   let running = false;
   let syncActive = false;
   let localReady = false;
@@ -81,11 +85,20 @@
   let inputFrame = 0;
   let lastTime = 0;
   let accumulator = 0;
+  let controllerFrame = 0;
 
   const inputBuffer = new Map();
   const localSources = new Map();
   const localInput = makeButtons();
   const neutralInput = makeButtons();
+  const remotePressed = {
+    1: new Set(),
+    2: new Set(),
+  };
+  const controllerHold = {
+    1: { pressedAt: new Map(), pendingRelease: new Map() },
+    2: { pressedAt: new Map(), pendingRelease: new Map() },
+  };
   const appliedButtons = {
     1: makeButtons(),
     2: makeButtons(),
@@ -111,6 +124,15 @@
 
   function isOffline() {
     return !!(offlineToggle && offlineToggle.checked);
+  }
+
+  function isControllerMode() {
+    return modeSelect ? modeSelect.value === "controller" : false;
+  }
+
+  function updateControllerStatus() {
+    if (!controllerStatus) return;
+    controllerStatus.textContent = `Controllers: ${controllerConns.size}`;
   }
 
   // --- Emulator render ---
@@ -187,6 +209,18 @@
     });
   }
 
+  function releaseRemotePlayer(player) {
+    const pressed = remotePressed[player];
+    if (!pressed || !nes) return;
+    for (const btnName of pressed) {
+      const nesBtn = NES_BUTTONS[btnName];
+      if (nesBtn !== undefined) {
+        nes.buttonUp(player, nesBtn);
+      }
+    }
+    pressed.clear();
+  }
+
   function resetSyncState() {
     inputBuffer.clear();
     simFrame = 0;
@@ -203,9 +237,21 @@
     resetSyncState();
   }
 
+  function stopControllerRun(reason, warn = false) {
+    running = false;
+    if (reason) setSyncStatus(reason, warn);
+    [1, 2].forEach((player) => {
+      releaseRemotePlayer(player);
+      controllerHold[player].pressedAt.clear();
+      controllerHold[player].pendingRelease.clear();
+    });
+  }
+
   function maybeStartSync() {
     if (syncActive) return;
     if (!localReady) return;
+
+    if (isControllerMode()) return;
 
     if (isOffline()) {
       resetSyncState();
@@ -218,7 +264,7 @@
     }
 
     if (!remoteReady) return;
-    if (!dataConn || !dataConn.open) return;
+    if (!netplayConn || !netplayConn.open) return;
     if (romInfoLocal && romInfoRemote && !romMatches()) {
       setSyncStatus("ROM mismatch", true);
       return;
@@ -291,8 +337,8 @@
     storeInput(frame, LOCAL_PLAYER, buttons);
     if (isOffline()) {
       storeInput(frame, REMOTE_PLAYER, cloneButtons(neutralInput));
-    } else if (dataConn && dataConn.open) {
-      dataConn.send({
+    } else if (netplayConn && netplayConn.open) {
+      netplayConn.send({
         type: "input",
         frame,
         player: LOCAL_PLAYER,
@@ -319,6 +365,26 @@
     }
 
     requestAnimationFrame(frameLoop);
+  }
+
+  function localFrameLoop() {
+    if (!running) return;
+    if (nes) nes.frame();
+    controllerFrame += 1;
+    [1, 2].forEach((player) => {
+      const pending = controllerHold[player].pendingRelease;
+      for (const [btnName, releaseFrame] of pending.entries()) {
+        if (controllerFrame < releaseFrame) continue;
+        const nesBtn = NES_BUTTONS[btnName];
+        if (nesBtn !== undefined && remotePressed[player].has(btnName)) {
+          nes.buttonUp(player, nesBtn);
+        }
+        remotePressed[player].delete(btnName);
+        pending.delete(btnName);
+        controllerHold[player].pressedAt.delete(btnName);
+      }
+    });
+    requestAnimationFrame(localFrameLoop);
   }
 
   // --- ROM loading + hash ---
@@ -405,13 +471,13 @@
 
   // --- Network layer ---
   function sendRomInfo() {
-    if (!dataConn || !dataConn.open || !romInfoLocal) return;
-    dataConn.send({ type: "rom_info", ...romInfoLocal });
+    if (!netplayConn || !netplayConn.open || !romInfoLocal) return;
+    netplayConn.send({ type: "rom_info", ...romInfoLocal });
   }
 
   function sendReady() {
-    if (!dataConn || !dataConn.open) return;
-    dataConn.send({ type: "ready" });
+    if (!netplayConn || !netplayConn.open) return;
+    netplayConn.send({ type: "ready" });
   }
 
   // --- Local input capture ---
@@ -439,6 +505,34 @@
     const btnName = KEY_MAP[code];
     if (!btnName) return;
     updateLocalButton(btnName, "keyboard", pressed);
+  }
+
+  function applyControllerInput(player, btnName, pressed) {
+    if (!nes) return;
+    const nesBtn = NES_BUTTONS[btnName];
+    if (nesBtn === undefined) return;
+    const pressedSet = remotePressed[player];
+    if (!pressedSet) return;
+    const hold = controllerHold[player];
+    if (pressed) {
+      if (pressedSet.has(btnName)) return;
+      nes.buttonDown(player, nesBtn);
+      pressedSet.add(btnName);
+      hold.pressedAt.set(btnName, controllerFrame);
+      hold.pendingRelease.delete(btnName);
+    } else {
+      if (!pressedSet.has(btnName)) return;
+      const pressedAt = hold.pressedAt.get(btnName);
+      const minReleaseFrame = (pressedAt ?? controllerFrame) + MIN_PRESS_FRAMES;
+      if (controllerFrame < minReleaseFrame) {
+        hold.pendingRelease.set(btnName, minReleaseFrame);
+        return;
+      }
+      nes.buttonUp(player, nesBtn);
+      pressedSet.delete(btnName);
+      hold.pressedAt.delete(btnName);
+      hold.pendingRelease.delete(btnName);
+    }
   }
 
   function releaseAllLocal() {
@@ -510,11 +604,80 @@
     resetJoystickVisual();
   }
 
-  function handleDataConnection(conn) {
-    if (dataConn && dataConn.open) {
-      dataConn.close();
+  function attachController(conn, player) {
+    if (!player || player < 1 || player > 2) return;
+    if (controllerConns.has(conn.peer)) return;
+    for (const [peerId, existing] of controllerConns.entries()) {
+      if (existing.player === player) {
+        existing.conn.close();
+        controllerConns.delete(peerId);
+      }
     }
-    dataConn = conn;
+    controllerConns.set(conn.peer, { conn, player });
+    updateControllerStatus();
+  }
+
+  function handleControllerMessage(conn, msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === "hello") {
+      attachController(conn, msg.player);
+      return;
+    }
+    if (msg.type === "input") {
+      if (!msg.player || !msg.btn) return;
+      applyControllerInput(msg.player, msg.btn, !!msg.pressed);
+    }
+  }
+
+  function handleNetplayMessage(msg) {
+    if (!msg || !msg.type) return;
+    if (msg.type === "input") {
+      if (msg.player !== REMOTE_PLAYER) return;
+      storeInput(msg.frame, msg.player, msg.buttons);
+      return;
+    }
+    if (msg.type === "ready") {
+      remoteReady = true;
+      setSyncStatus("guest ready");
+      maybeStartSync();
+      return;
+    }
+    if (msg.type === "rom_info") {
+      romInfoRemote = msg;
+      if (!romMatches()) {
+        setSyncStatus("ROM mismatch", true);
+        stopSync("ROM mismatch", true);
+      } else {
+        setSyncStatus("ROM verified");
+        maybeStartSync();
+      }
+    }
+  }
+
+  function handleDataConnection(conn) {
+    if (isControllerMode()) {
+      conn.on("open", () => {
+        updateControllerStatus();
+      });
+      conn.on("data", (msg) => handleControllerMessage(conn, msg));
+      conn.on("close", () => {
+        const info = controllerConns.get(conn.peer);
+        if (info) {
+          releaseRemotePlayer(info.player);
+          controllerConns.delete(conn.peer);
+          updateControllerStatus();
+        }
+      });
+      conn.on("error", (err) => {
+        console.error(err);
+      });
+      return;
+    }
+
+    if (netplayConn && netplayConn.open) {
+      netplayConn.close();
+    }
+    netplayConn = conn;
     remoteReady = false;
     romInfoRemote = null;
     setPill(guestStatus, "Guest: connecting...");
@@ -532,30 +695,7 @@
       maybeStartSync();
     });
 
-    conn.on("data", (msg) => {
-      if (!msg || !msg.type) return;
-      if (msg.type === "input") {
-        if (msg.player !== REMOTE_PLAYER) return;
-        storeInput(msg.frame, msg.player, msg.buttons);
-        return;
-      }
-      if (msg.type === "ready") {
-        remoteReady = true;
-        setSyncStatus("guest ready");
-        maybeStartSync();
-        return;
-      }
-      if (msg.type === "rom_info") {
-        romInfoRemote = msg;
-        if (!romMatches()) {
-          setSyncStatus("ROM mismatch", true);
-          stopSync("ROM mismatch", true);
-        } else {
-          setSyncStatus("ROM verified");
-          maybeStartSync();
-        }
-      }
-    });
+    conn.on("data", handleNetplayMessage);
 
     conn.on("close", () => {
       if (isOffline()) {
@@ -619,7 +759,7 @@
 
   function handleOfflineToggle() {
     if (isOffline()) {
-      if (dataConn && dataConn.open) dataConn.close();
+      if (netplayConn && netplayConn.open) netplayConn.close();
       remoteReady = false;
       romInfoRemote = null;
       setPill(guestStatus, "Guest: offline", true);
@@ -633,11 +773,11 @@
     romInfoRemote = null;
     setPill(
       guestStatus,
-      dataConn && dataConn.open ? `Guest: ${dataConn.peer}` : "Guest: waiting",
-      !(dataConn && dataConn.open)
+      netplayConn && netplayConn.open ? `Guest: ${netplayConn.peer}` : "Guest: waiting",
+      !(netplayConn && netplayConn.open)
     );
     stopSync("waiting for guest", true);
-    if (dataConn && dataConn.open) {
+    if (netplayConn && netplayConn.open) {
       sendRomInfo();
       if (localReady) sendReady();
     }
@@ -646,6 +786,28 @@
 
   if (offlineToggle) {
     offlineToggle.addEventListener("change", handleOfflineToggle);
+  }
+
+  function handleModeChange() {
+    if (isControllerMode()) {
+      if (offlineToggle) offlineToggle.checked = false;
+      stopSync("controller mode");
+      if (!localReady) {
+        setSyncStatus("waiting for ROM");
+        return;
+      }
+      running = true;
+      setSyncStatus("controller mode");
+      requestAnimationFrame(localFrameLoop);
+      return;
+    }
+
+    stopControllerRun("netplay mode");
+    maybeStartSync();
+  }
+
+  if (modeSelect) {
+    modeSelect.addEventListener("change", handleModeChange);
   }
 
   window.addEventListener("keydown", (event) => {
@@ -759,8 +921,16 @@
       localReady = true;
       sendRomInfo();
       sendReady();
-      setSyncStatus("waiting for guest");
-      maybeStartSync();
+      if (isControllerMode()) {
+        setSyncStatus("controller mode");
+        if (!running) {
+          running = true;
+          requestAnimationFrame(localFrameLoop);
+        }
+      } else {
+        setSyncStatus("waiting for guest");
+        maybeStartSync();
+      }
     } catch (err) {
       setPill(romStatus, "ROM: failed", true);
       setSyncStatus("ROM load failed", true);
@@ -781,8 +951,16 @@
       localReady = true;
       sendRomInfo();
       sendReady();
-      setSyncStatus("waiting for guest");
-      maybeStartSync();
+      if (isControllerMode()) {
+        setSyncStatus("controller mode");
+        if (!running) {
+          running = true;
+          requestAnimationFrame(localFrameLoop);
+        }
+      } else {
+        setSyncStatus("waiting for guest");
+        maybeStartSync();
+      }
     } catch (err) {
       setPill(romStatus, "ROM: failed", true);
       setSyncStatus("ROM load failed", true);
