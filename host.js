@@ -4,6 +4,7 @@
   const romStatus = document.querySelector("#rom-status");
   const syncStatus = document.querySelector("#sync-status");
   const romInput = document.querySelector("#rom-input");
+  const offlineToggle = document.querySelector("#offline-toggle");
   const canvas = document.querySelector("#screen");
   const ctx = canvas.getContext("2d", { alpha: false });
   const peerIdEl = document.querySelector("#peer-id");
@@ -82,6 +83,7 @@
   const inputBuffer = new Map();
   const localSources = new Map();
   const localInput = makeButtons();
+  const neutralInput = makeButtons();
   const appliedButtons = {
     1: makeButtons(),
     2: makeButtons(),
@@ -103,6 +105,10 @@
 
   function setSyncStatus(text, warn = false) {
     setPill(syncStatus, `Sync: ${text}`, warn);
+  }
+
+  function isOffline() {
+    return !!(offlineToggle && offlineToggle.checked);
   }
 
   // --- Emulator render ---
@@ -159,11 +165,10 @@
 
   function seedInputBuffer() {
     if (INPUT_DELAY_FRAMES <= 0) return;
-    const neutral = makeButtons();
     for (let f = 0; f < INPUT_DELAY_FRAMES; f += 1) {
       inputBuffer.set(f, {
-        1: cloneButtons(neutral),
-        2: cloneButtons(neutral),
+        1: cloneButtons(neutralInput),
+        2: cloneButtons(neutralInput),
       });
     }
   }
@@ -198,7 +203,19 @@
 
   function maybeStartSync() {
     if (syncActive) return;
-    if (!localReady || !remoteReady) return;
+    if (!localReady) return;
+
+    if (isOffline()) {
+      resetSyncState();
+      syncActive = true;
+      running = true;
+      lastTime = performance.now();
+      setSyncStatus("offline running");
+      requestAnimationFrame(frameLoop);
+      return;
+    }
+
+    if (!remoteReady) return;
     if (!dataConn || !dataConn.open) return;
     if (romInfoLocal && romInfoRemote && !romMatches()) {
       setSyncStatus("ROM mismatch", true);
@@ -270,7 +287,9 @@
     const frame = inputFrame + INPUT_DELAY_FRAMES;
     const buttons = cloneButtons(localInput);
     storeInput(frame, LOCAL_PLAYER, buttons);
-    if (dataConn && dataConn.open) {
+    if (isOffline()) {
+      storeInput(frame, REMOTE_PLAYER, cloneButtons(neutralInput));
+    } else if (dataConn && dataConn.open) {
       dataConn.send({
         type: "input",
         frame,
@@ -451,6 +470,11 @@
     setPill(guestStatus, "Guest: connecting...");
 
     conn.on("open", () => {
+      if (isOffline()) {
+        setPill(guestStatus, `Guest: ${conn.peer} (offline)`, true);
+        setSyncStatus("offline mode", true);
+        return;
+      }
       setPill(guestStatus, `Guest: ${conn.peer}`);
       sendRomInfo();
       if (localReady) sendReady();
@@ -484,6 +508,10 @@
     });
 
     conn.on("close", () => {
+      if (isOffline()) {
+        setPill(guestStatus, "Guest: offline", true);
+        return;
+      }
       setPill(guestStatus, "Guest: waiting", true);
       stopSync("waiting for guest", true);
       remoteReady = false;
@@ -538,6 +566,37 @@
       window.prompt("Copy Peer ID:", id);
     }
   });
+
+  function handleOfflineToggle() {
+    if (isOffline()) {
+      if (dataConn && dataConn.open) dataConn.close();
+      remoteReady = false;
+      romInfoRemote = null;
+      setPill(guestStatus, "Guest: offline", true);
+      stopSync("offline mode");
+      if (!localReady) setSyncStatus("waiting for ROM");
+      maybeStartSync();
+      return;
+    }
+
+    remoteReady = false;
+    romInfoRemote = null;
+    setPill(
+      guestStatus,
+      dataConn && dataConn.open ? `Guest: ${dataConn.peer}` : "Guest: waiting",
+      !(dataConn && dataConn.open)
+    );
+    stopSync("waiting for guest", true);
+    if (dataConn && dataConn.open) {
+      sendRomInfo();
+      if (localReady) sendReady();
+    }
+    maybeStartSync();
+  }
+
+  if (offlineToggle) {
+    offlineToggle.addEventListener("change", handleOfflineToggle);
+  }
 
   window.addEventListener("keydown", (event) => {
     if (event.repeat) return;

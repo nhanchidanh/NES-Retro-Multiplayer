@@ -201,6 +201,12 @@ input[type="file"] {
   color: var(--text);
 }
 
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 input[type="text"] {
   padding: 10px 12px;
   border-radius: 10px;
