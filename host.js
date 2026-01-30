@@ -69,6 +69,13 @@
   const baseCtx = baseCanvas.getContext("2d", { alpha: false });
   const imageData = baseCtx.createImageData(NES_WIDTH, NES_HEIGHT);
   const frameBufferU32 = new Uint32Array(imageData.data.buffer);
+  const audioState = {
+    ctx: null,
+    node: null,
+    queueL: [],
+    queueR: [],
+    enabled: false,
+  };
 
   let nes = null;
   let peer = null;
@@ -154,6 +161,17 @@
         baseCtx.putImageData(imageData, 0, 0);
         ctx.drawImage(baseCanvas, 0, 0, canvas.width, canvas.height);
       },
+      onAudioSample(left, right) {
+        if (!audioState.enabled) return;
+        audioState.queueL.push(left);
+        audioState.queueR.push(right);
+        const maxSamples = (audioState.ctx?.sampleRate || 44100) * 0.2;
+        if (audioState.queueL.length > maxSamples) {
+          const drop = audioState.queueL.length - maxSamples;
+          audioState.queueL.splice(0, drop);
+          audioState.queueR.splice(0, drop);
+        }
+      },
       onStatusUpdate(status) {
         setPill(romStatus, `ROM: ${status}`);
       },
@@ -207,6 +225,42 @@
         }
       });
     });
+  }
+
+  function ensureAudio() {
+    if (audioState.ctx) return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctxAudio = new AudioCtx({ latencyHint: "interactive" });
+    const node = ctxAudio.createScriptProcessor(1024, 0, 2);
+    node.onaudioprocess = (event) => {
+      const outL = event.outputBuffer.getChannelData(0);
+      const outR = event.outputBuffer.getChannelData(1);
+      for (let i = 0; i < outL.length; i += 1) {
+        if (audioState.queueL.length > 0) {
+          outL[i] = audioState.queueL.shift();
+          outR[i] = audioState.queueR.shift() ?? 0;
+        } else {
+          outL[i] = 0;
+          outR[i] = 0;
+        }
+      }
+    };
+    node.connect(ctxAudio.destination);
+    audioState.ctx = ctxAudio;
+    audioState.node = node;
+    audioState.enabled = true;
+  }
+
+  async function resumeAudio() {
+    if (!audioState.ctx) return;
+    if (audioState.ctx.state === "suspended") {
+      try {
+        await audioState.ctx.resume();
+      } catch (err) {
+        console.error(err);
+      }
+    }
   }
 
   function releaseRemotePlayer(player) {
@@ -814,6 +868,8 @@
     if (event.repeat) return;
     if (!KEY_MAP[event.code]) return;
     event.preventDefault();
+    ensureAudio();
+    resumeAudio();
     applyLocalInput(event.code, true);
   });
 
@@ -867,6 +923,8 @@
       button.classList.add("active");
       targets.forEach((btn) => updateLocalButton(btn, "touch", true));
       if (navigator.vibrate) navigator.vibrate(10);
+      ensureAudio();
+      resumeAudio();
     };
     const release = () => {
       button.classList.remove("active");
@@ -896,6 +954,8 @@
       joystickBase.setPointerCapture(event.pointerId);
       handleJoystickMove(event);
       if (navigator.vibrate) navigator.vibrate(10);
+      ensureAudio();
+      resumeAudio();
     });
 
     joystickBase.addEventListener("pointermove", handleJoystickMove);
@@ -908,6 +968,8 @@
     const option = librarySelect.selectedOptions[0];
     if (!option || !option.value) return;
     const name = option.dataset.name || option.textContent;
+    ensureAudio();
+    resumeAudio();
     try {
       setPill(romStatus, `ROM: loading ${name}`);
       const response = await fetch(encodeURI(option.value));
@@ -941,6 +1003,8 @@
   romInput.addEventListener("change", async (event) => {
     const file = event.target.files[0];
     if (!file) return;
+    ensureAudio();
+    resumeAudio();
     try {
       setPill(romStatus, `ROM: loading ${file.name}`);
       const romData = await loadRom(file);
