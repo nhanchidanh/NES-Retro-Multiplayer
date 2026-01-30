@@ -41,10 +41,14 @@
     15: "RIGHT",
   };
 
+  const MIN_PRESS_MS = 60;
+
   let peer = null;
   let dataConn = null;
   let gamepadIndex = null;
   const pressedSources = new Map();
+  const pressStartedAt = new Map();
+  const pendingReleaseTimers = new Map();
   const gamepadButtons = {};
   const axisState = { left: false, right: false, up: false, down: false };
   const joystickState = {
@@ -103,9 +107,31 @@
       pressedSources.set(btn, sources);
     }
     const hasPressed = sources.size > 0;
-    if (hadPressed !== hasPressed) {
-      sendInput(btn, hasPressed);
+    if (hadPressed === hasPressed) return;
+    if (hasPressed) {
+      if (pendingReleaseTimers.has(btn)) {
+        clearTimeout(pendingReleaseTimers.get(btn));
+        pendingReleaseTimers.delete(btn);
+      }
+      pressStartedAt.set(btn, performance.now());
+      sendInput(btn, true);
+      return;
     }
+    const startedAt = pressStartedAt.get(btn) ?? performance.now();
+    const elapsed = performance.now() - startedAt;
+    if (elapsed >= MIN_PRESS_MS) {
+      sendInput(btn, false);
+      pressStartedAt.delete(btn);
+      pendingReleaseTimers.delete(btn);
+      return;
+    }
+    const delay = Math.max(0, MIN_PRESS_MS - elapsed);
+    const timer = setTimeout(() => {
+      sendInput(btn, false);
+      pressStartedAt.delete(btn);
+      pendingReleaseTimers.delete(btn);
+    }, delay);
+    pendingReleaseTimers.set(btn, timer);
   }
 
   function releaseAll() {
@@ -113,6 +139,11 @@
       sendInput(btn, false);
     }
     pressedSources.clear();
+    pressStartedAt.clear();
+    for (const timer of pendingReleaseTimers.values()) {
+      clearTimeout(timer);
+    }
+    pendingReleaseTimers.clear();
     resetGamepadState();
     resetJoystickVisual();
     controlButtons.forEach((btn) => btn.classList.remove("active"));
@@ -138,6 +169,13 @@
         pressedSources.delete(btn);
       }
       sendInput(btn, sources.size > 0);
+    }
+    if (source === "gamepad") {
+      pressStartedAt.clear();
+      for (const timer of pendingReleaseTimers.values()) {
+        clearTimeout(timer);
+      }
+      pendingReleaseTimers.clear();
     }
     if (source === "gamepad") resetGamepadState();
   }
