@@ -20,10 +20,11 @@
   const joystickKnob = document.querySelector("#joystick-knob");
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
+  const displayMode = document.querySelector("#display-mode");
 
   const NES_WIDTH = 256;
   const NES_HEIGHT = 240;
-  const SCALE = 3;
+  const DEFAULT_SCALE = 3;
   const FRAME_MS = 1000 / 60;
   const INPUT_DELAY_FRAMES = 2;
   const MAX_SIM_STEPS = 4;
@@ -93,6 +94,8 @@
   let lastTime = 0;
   let accumulator = 0;
   let controllerFrame = 0;
+  let controllerLastTime = 0;
+  let controllerAccumulator = 0;
 
   const inputBuffer = new Map();
   const localSources = new Map();
@@ -143,11 +146,81 @@
   }
 
   // --- Emulator render ---
+  function getDisplayMode() {
+    return displayMode ? displayMode.value : "auto";
+  }
+
+  function getPixelRatio(useInteger) {
+    const ratio = window.devicePixelRatio || 1;
+    if (!useInteger) return Math.max(1, ratio);
+    return Math.max(1, Math.round(ratio));
+  }
+
+  function getFrameRect() {
+    if (!videoFrame) return null;
+    const rect = videoFrame.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return rect;
+  }
+
+  function resolveTargetSize() {
+    const mode = getDisplayMode();
+    const rect = getFrameRect();
+    let targetWidth = NES_WIDTH * DEFAULT_SCALE;
+    let targetHeight = NES_HEIGHT * DEFAULT_SCALE;
+    let useIntegerRatio = true;
+
+    if (mode === "fit" && rect) {
+      const scale = Math.min(rect.width / NES_WIDTH, rect.height / NES_HEIGHT);
+      targetWidth = Math.max(1, Math.round(NES_WIDTH * scale));
+      targetHeight = Math.max(1, Math.round(NES_HEIGHT * scale));
+      useIntegerRatio = false;
+      return { targetWidth, targetHeight, useIntegerRatio };
+    }
+
+    if ((mode === "fill-sharp" || mode === "fill-smooth") && rect) {
+      targetWidth = Math.max(1, Math.round(rect.width));
+      targetHeight = Math.max(1, Math.round(rect.height));
+      useIntegerRatio = false;
+      return { targetWidth, targetHeight, useIntegerRatio };
+    }
+
+    if (mode && mode.endsWith("x")) {
+      let scale = Number.parseInt(mode, 10);
+      if (!Number.isFinite(scale) || scale < 1) scale = DEFAULT_SCALE;
+      if (rect) {
+        const maxScale = Math.floor(Math.min(rect.width / NES_WIDTH, rect.height / NES_HEIGHT));
+        if (maxScale >= 1 && scale > maxScale) scale = maxScale;
+      }
+      targetWidth = NES_WIDTH * scale;
+      targetHeight = NES_HEIGHT * scale;
+      return { targetWidth, targetHeight, useIntegerRatio };
+    }
+
+    if (rect) {
+      const scale = Math.max(1, Math.floor(Math.min(rect.width / NES_WIDTH, rect.height / NES_HEIGHT)));
+      targetWidth = NES_WIDTH * scale;
+      targetHeight = NES_HEIGHT * scale;
+    }
+
+    return { targetWidth, targetHeight, useIntegerRatio };
+  }
+
   function updateOutputSize() {
-    canvas.width = NES_WIDTH * SCALE;
-    canvas.height = NES_HEIGHT * SCALE;
-    ctx.imageSmoothingEnabled = false;
-    baseCtx.imageSmoothingEnabled = false;
+    const mode = getDisplayMode();
+    const { targetWidth, targetHeight, useIntegerRatio } = resolveTargetSize();
+    const pixelRatio = getPixelRatio(useIntegerRatio);
+    const width = Math.max(1, Math.round(targetWidth));
+    const height = Math.max(1, Math.round(targetHeight));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.width = Math.max(1, Math.round(width * pixelRatio));
+    canvas.height = Math.max(1, Math.round(height * pixelRatio));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const smooth = mode === "fit" || mode === "fill-smooth";
+    ctx.imageSmoothingEnabled = smooth;
+    baseCtx.imageSmoothingEnabled = smooth;
+    canvas.style.imageRendering = smooth ? "auto" : "pixelated";
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
@@ -294,11 +367,27 @@
   function stopControllerRun(reason, warn = false) {
     running = false;
     if (reason) setSyncStatus(reason, warn);
+    controllerLastTime = 0;
+    controllerAccumulator = 0;
+    controllerFrame = 0;
     [1, 2].forEach((player) => {
       releaseRemotePlayer(player);
       controllerHold[player].pressedAt.clear();
       controllerHold[player].pendingRelease.clear();
     });
+  }
+
+  function resetControllerTiming() {
+    controllerLastTime = performance.now();
+    controllerAccumulator = 0;
+    controllerFrame = 0;
+  }
+
+  function startControllerLoop() {
+    if (running) return;
+    running = true;
+    resetControllerTiming();
+    requestAnimationFrame(localFrameLoop);
   }
 
   function maybeStartSync() {
@@ -421,23 +510,34 @@
     requestAnimationFrame(frameLoop);
   }
 
-  function localFrameLoop() {
+  function localFrameLoop(now) {
     if (!running) return;
-    if (nes) nes.frame();
-    controllerFrame += 1;
-    [1, 2].forEach((player) => {
-      const pending = controllerHold[player].pendingRelease;
-      for (const [btnName, releaseFrame] of pending.entries()) {
-        if (controllerFrame < releaseFrame) continue;
-        const nesBtn = NES_BUTTONS[btnName];
-        if (nesBtn !== undefined && remotePressed[player].has(btnName)) {
-          nes.buttonUp(player, nesBtn);
+    if (!controllerLastTime) controllerLastTime = now;
+    const delta = now - controllerLastTime;
+    controllerLastTime = now;
+    controllerAccumulator += delta;
+    const maxAccum = FRAME_MS * MAX_SIM_STEPS;
+    if (controllerAccumulator > maxAccum) controllerAccumulator = maxAccum;
+
+    while (controllerAccumulator >= FRAME_MS) {
+      if (nes) nes.frame();
+      controllerFrame += 1;
+      [1, 2].forEach((player) => {
+        const pending = controllerHold[player].pendingRelease;
+        for (const [btnName, releaseFrame] of pending.entries()) {
+          if (controllerFrame < releaseFrame) continue;
+          const nesBtn = NES_BUTTONS[btnName];
+          if (nesBtn !== undefined && remotePressed[player].has(btnName)) {
+            nes.buttonUp(player, nesBtn);
+          }
+          remotePressed[player].delete(btnName);
+          pending.delete(btnName);
+          controllerHold[player].pressedAt.delete(btnName);
         }
-        remotePressed[player].delete(btnName);
-        pending.delete(btnName);
-        controllerHold[player].pressedAt.delete(btnName);
-      }
-    });
+      });
+      controllerAccumulator -= FRAME_MS;
+    }
+
     requestAnimationFrame(localFrameLoop);
   }
 
@@ -850,9 +950,8 @@
         setSyncStatus("waiting for ROM");
         return;
       }
-      running = true;
       setSyncStatus("controller mode");
-      requestAnimationFrame(localFrameLoop);
+      startControllerLoop();
       return;
     }
 
@@ -862,6 +961,23 @@
 
   if (modeSelect) {
     modeSelect.addEventListener("change", handleModeChange);
+  }
+
+  if (displayMode) {
+    displayMode.addEventListener("change", () => {
+      updateOutputSize();
+    });
+  }
+
+  if (videoFrame && "ResizeObserver" in window) {
+    const resizeObserver = new ResizeObserver(() => {
+      updateOutputSize();
+    });
+    resizeObserver.observe(videoFrame);
+  } else {
+    window.addEventListener("resize", () => {
+      updateOutputSize();
+    });
   }
 
   window.addEventListener("keydown", (event) => {
@@ -887,6 +1003,7 @@
     if (!fullscreenBtn || !videoFrame) return;
     const isFull = document.fullscreenElement === videoFrame;
     fullscreenBtn.textContent = isFull ? "Exit Fullscreen" : "Fullscreen";
+    updateOutputSize();
   }
 
   async function toggleFullscreen() {
@@ -985,10 +1102,7 @@
       sendReady();
       if (isControllerMode()) {
         setSyncStatus("controller mode");
-        if (!running) {
-          running = true;
-          requestAnimationFrame(localFrameLoop);
-        }
+        startControllerLoop();
       } else {
         setSyncStatus("waiting for guest");
         maybeStartSync();
@@ -1017,10 +1131,7 @@
       sendReady();
       if (isControllerMode()) {
         setSyncStatus("controller mode");
-        if (!running) {
-          running = true;
-          requestAnimationFrame(localFrameLoop);
-        }
+        startControllerLoop();
       } else {
         setSyncStatus("waiting for guest");
         maybeStartSync();
