@@ -21,6 +21,8 @@
   const videoFrame = document.querySelector("#video-frame");
   const fullscreenBtn = document.querySelector("#fullscreen-btn");
   const displayMode = document.querySelector("#display-mode");
+  const audioToggle = document.querySelector("#audio-toggle");
+  const audioLabel = document.querySelector("#audio-label");
 
   const NES_WIDTH = 256;
   const NES_HEIGHT = 240;
@@ -77,6 +79,7 @@
     queueR: [],
     enabled: false,
   };
+  let audioEnabled = audioToggle ? audioToggle.checked : true;
 
   let nes = null;
   let peer = null;
@@ -143,6 +146,11 @@
   function updateControllerStatus() {
     if (!controllerStatus) return;
     controllerStatus.textContent = `Controllers: ${controllerConns.size}`;
+  }
+
+  function updateAudioLabel() {
+    if (!audioLabel) return;
+    audioLabel.textContent = audioEnabled ? "On" : "Off";
   }
 
   // --- Emulator render ---
@@ -301,7 +309,11 @@
   }
 
   function ensureAudio() {
-    if (audioState.ctx) return;
+    if (!audioEnabled) return;
+    if (audioState.ctx) {
+      audioState.enabled = true;
+      return;
+    }
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
     const ctxAudio = new AudioCtx({ latencyHint: "interactive" });
@@ -326,6 +338,7 @@
   }
 
   async function resumeAudio() {
+    if (!audioEnabled) return;
     if (!audioState.ctx) return;
     if (audioState.ctx.state === "suspended") {
       try {
@@ -334,6 +347,27 @@
         console.error(err);
       }
     }
+  }
+
+  async function setAudioEnabled(enabled) {
+    audioEnabled = !!enabled;
+    if (audioToggle) audioToggle.checked = audioEnabled;
+    updateAudioLabel();
+    audioState.enabled = audioEnabled;
+    if (!audioEnabled) {
+      audioState.queueL.length = 0;
+      audioState.queueR.length = 0;
+      if (audioState.ctx && audioState.ctx.state === "running") {
+        try {
+          await audioState.ctx.suspend();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return;
+    }
+    ensureAudio();
+    resumeAudio();
   }
 
   function releaseRemotePlayer(player) {
@@ -969,6 +1003,12 @@
     });
   }
 
+  if (audioToggle) {
+    audioToggle.addEventListener("change", () => {
+      setAudioEnabled(audioToggle.checked);
+    });
+  }
+
   if (videoFrame && "ResizeObserver" in window) {
     const resizeObserver = new ResizeObserver(() => {
       updateOutputSize();
@@ -1150,6 +1190,7 @@
   }
 
   updateOutputSize();
+  updateAudioLabel();
   initNes();
   setSyncStatus("waiting for ROM");
   setupPeer();

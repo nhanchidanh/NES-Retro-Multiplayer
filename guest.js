@@ -13,6 +13,8 @@
   const romInput = document.querySelector("#rom-input");
   const librarySelect = document.querySelector("#rom-library");
   const loadLibraryBtn = document.querySelector("#load-library");
+  const audioToggle = document.querySelector("#audio-toggle");
+  const audioLabel = document.querySelector("#audio-label");
   const controlButtons = Array.from(document.querySelectorAll("[data-btn], [data-combo]"));
   const joystickBase = document.querySelector("#joystick-base");
   const joystickKnob = document.querySelector("#joystick-knob");
@@ -82,6 +84,7 @@
     queueR: [],
     enabled: false,
   };
+  let audioEnabled = audioToggle ? audioToggle.checked : true;
 
   let nes = null;
   let peer = null;
@@ -127,6 +130,11 @@
 
   function setSyncStatus(text, warn = false) {
     setPill(syncStatus, `Sync: ${text}`, warn);
+  }
+
+  function updateAudioLabel() {
+    if (!audioLabel) return;
+    audioLabel.textContent = audioEnabled ? "On" : "Off";
   }
 
   // --- Emulator render ---
@@ -236,7 +244,11 @@
   }
 
   function ensureAudio() {
-    if (audioState.ctx) return;
+    if (!audioEnabled) return;
+    if (audioState.ctx) {
+      audioState.enabled = true;
+      return;
+    }
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
     const ctxAudio = new AudioCtx({ latencyHint: "interactive" });
@@ -261,6 +273,7 @@
   }
 
   async function resumeAudio() {
+    if (!audioEnabled) return;
     if (!audioState.ctx) return;
     if (audioState.ctx.state === "suspended") {
       try {
@@ -269,6 +282,27 @@
         console.error(err);
       }
     }
+  }
+
+  async function setAudioEnabled(enabled) {
+    audioEnabled = !!enabled;
+    if (audioToggle) audioToggle.checked = audioEnabled;
+    updateAudioLabel();
+    audioState.enabled = audioEnabled;
+    if (!audioEnabled) {
+      audioState.queueL.length = 0;
+      audioState.queueR.length = 0;
+      if (audioState.ctx && audioState.ctx.state === "running") {
+        try {
+          await audioState.ctx.suspend();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return;
+    }
+    ensureAudio();
+    resumeAudio();
   }
 
   // --- Input buffer + lockstep ---
@@ -814,6 +848,12 @@
     });
   }
 
+  if (audioToggle) {
+    audioToggle.addEventListener("change", () => {
+      setAudioEnabled(audioToggle.checked);
+    });
+  }
+
   if (videoFrame && "ResizeObserver" in window) {
     const resizeObserver = new ResizeObserver(() => {
       updateOutputSize();
@@ -1034,6 +1074,7 @@
 
   setupPeer();
   updateOutputSize();
+  updateAudioLabel();
   initNes();
   setSyncStatus("waiting for ROM");
   fetchLibrary();
