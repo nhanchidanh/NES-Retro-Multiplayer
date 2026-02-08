@@ -3,109 +3,139 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Host - NES Netplay</title>
+    <title>Host Console - NES Retro</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="wrap">
-      <header>
-        <h1>Host Console</h1>
-        <p>Lockstep netplay: both sides run jsnes locally and only sync inputs.</p>
+      <header class="main-header">
+        <div class="logo-area">
+          <div class="pixel-box"></div>
+          <h1>HOST<span>CONSOLE</span></h1>
+        </div>
+        <p class="subtitle">Initialize session, load a ROM, and share your ID.</p>
       </header>
 
-      <section class="panel">
-        <div class="status">
-          <span class="pill" id="peer-status">Peer: connecting...</span>
-          <span class="pill" id="guest-status">Guest: waiting</span>
-          <span class="pill" id="controller-status">Controllers: 0</span>
-          <span class="pill" id="rom-status">ROM: none</span>
-          <span class="pill" id="sync-status">Sync: waiting for ROM</span>
-        </div>
-
-        <div class="controls">
-          <label for="rom-input">Local ROM (.nes)</label>
-          <input id="rom-input" type="file" accept=".nes" />
-
-          <label for="rom-library">ROM library</label>
-          <div class="inline">
-            <select id="rom-library"></select>
-            <button class="button secondary" id="load-library" type="button">Load</button>
-          </div>
-
-          <label for="mode-select">Mode</label>
-          <div class="inline">
-            <select id="mode-select">
-              <option value="netplay">Netplay (2 players)</option>
-              <option value="controller">Controller mode (phones as gamepads)</option>
-            </select>
-          </div>
-
-          <label for="display-mode">Display</label>
-          <div class="inline">
-            <select id="display-mode">
-              <option value="auto" selected>Auto (pixel perfect)</option>
-              <option value="fit">Fit (smooth)</option>
-              <option value="fill-sharp">Fill (sharp)</option>
-              <option value="fill-smooth">Fill (smooth)</option>
-              <option value="2x">Fixed 2x</option>
-              <option value="3x">Fixed 3x</option>
-              <option value="4x">Fixed 4x</option>
-              <option value="5x">Fixed 5x</option>
-            </select>
-          </div>
-
-          <label for="audio-toggle">Sound</label>
-          <div class="inline">
-            <input id="audio-toggle" type="checkbox" checked />
-            <span id="audio-label">On</span>
-          </div>
-
-          <label for="offline-toggle">Offline mode</label>
-          <div class="inline">
-            <input id="offline-toggle" type="checkbox" />
-            <span>Run solo (no guest required)</span>
+      <div class="grid">
+        <section class="panel session-panel">
+          <h3>Session Control</h3>
+          <div class="status">
+            <span class="pill" id="peer-status">Peer: connecting...</span>
+            <span class="pill" id="guest-status">Guest: waiting</span>
+            <span class="pill" id="controller-status">Controllers: 0</span>
           </div>
 
           <div class="peer-box">
             <div>
-              <label>Host Peer ID</label>
+              <label>Your Host Peer ID</label>
               <div class="peer-id" id="peer-id">waiting...</div>
             </div>
             <button class="button secondary" id="copy-id" type="button" disabled>Copy ID</button>
           </div>
 
-          <span>Player 1 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Netplay requires both players to load the exact same ROM file.</span>
-          <span>Controller mode: phones connect as gamepads, host runs the game.</span>
-          <span>Input delay: 2 frames (lockstep only).</span>
-        </div>
+          <div class="form-group">
+            <label for="mode-select">Operational Mode</label>
+            <select id="mode-select">
+              <option value="netplay">Netplay (Remote 2P)</option>
+              <option value="controller">Local Gamepad Mode</option>
+            </select>
+          </div>
 
+          <div class="form-group">
+            <label>
+              <input id="offline-toggle" type="checkbox" />
+              <span>Offline / Solo Play</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel rom-panel">
+          <h3>ROM Management</h3>
+          <div class="status">
+             <span class="pill" id="rom-status">ROM: none</span>
+             <span class="pill" id="sync-status">Sync: idle</span>
+          </div>
+
+          <div class="form-group">
+            <label for="rom-library">Built-in Library</label>
+            <div class="inline">
+              <select id="rom-library"></select>
+              <button class="button secondary" id="load-library" type="button">Load</button>
+            </div>
+          </div>
+
+          <div class="divider"><span>OR</span></div>
+
+          <div class="form-group">
+            <label for="rom-input">Upload Local ROM (.nes)</label>
+            <input id="rom-input" type="file" accept=".nes" />
+          </div>
+        </section>
+
+        <section class="panel settings-panel">
+          <h3>Display & Audio</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="display-mode">Scaling</label>
+              <select id="display-mode">
+                <option value="auto" selected>Auto (Pixel Perfect)</option>
+                <option value="fit">Fit Screen</option>
+                <option value="fill-sharp">Fill Sharp</option>
+                <option value="2x">Fixed 2x</option>
+                <option value="3x">Fixed 3x</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="audio-toggle">Sound Output</label>
+              <div class="inline">
+                <input id="audio-toggle" type="checkbox" checked />
+                <span id="audio-label">Enabled</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="screen-section">
         <div class="screen-wrap">
           <div class="video-frame" id="video-frame">
             <canvas id="screen" width="256" height="240"></canvas>
             <button class="button secondary fullscreen-btn" id="fullscreen-btn" type="button">
-              Fullscreen
+              [ ] Fullscreen
             </button>
             <div class="touch-overlay host-overlay">
               <div class="dpad">
-                <div class="joystick-base" id="joystick-base" role="group" aria-label="D-pad joystick">
+                <div class="joystick-base" id="joystick-base">
                   <div class="joystick-knob" id="joystick-knob"></div>
                 </div>
               </div>
               <div class="actions">
                 <div class="action-row">
-                  <button class="control action" data-btn="B" type="button">B</button>
-                  <button class="control action" data-btn="A" type="button">A</button>
+                  <button class="control action action-b" data-btn="B" type="button">B</button>
+                  <button class="control action action-a" data-btn="A" type="button">A</button>
                 </div>
                 <div class="action-row">
                   <button class="control action combo" data-combo="A,B" type="button">A+B</button>
                 </div>
                 <div class="action-row">
-                  <button class="control small" data-btn="SELECT" type="button">Select</button>
-                  <button class="control small" data-btn="START" type="button">Start</button>
+                  <button class="control small" data-btn="SELECT" type="button">SELECT</button>
+                  <button class="control small" data-btn="START" type="button">START</button>
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="help-section">
+        <div class="info-card">
+          <h4>Keyboard Controls</h4>
+          <div class="keyboard-grid">
+            <div class="k-item"><span>ARROWS</span> D-Pad</div>
+            <div class="k-item"><span>Z</span> Button A</div>
+            <div class="k-item"><span>X</span> Button B</div>
+            <div class="k-item"><span>ENTER</span> START</div>
+            <div class="k-item"><span>SHIFT</span> SELECT</div>
           </div>
         </div>
       </section>
@@ -116,3 +146,4 @@
     <script src="host.js" defer></script>
   </body>
 </html>
+

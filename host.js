@@ -686,6 +686,11 @@
     const isPressed = sources.size > 0;
     if (wasPressed !== isPressed) {
       localInput[btnName] = isPressed;
+      // If we are in controller mode, we feed inputs directly to NES immediately (for P1 usually)
+      if (isControllerMode() && nes && running) {
+        if (isPressed) nes.buttonDown(LOCAL_PLAYER, NES_BUTTONS[btnName]);
+        else nes.buttonUp(LOCAL_PLAYER, NES_BUTTONS[btnName]);
+      }
     }
   }
 
@@ -995,6 +1000,10 @@
 
   if (modeSelect) {
     modeSelect.addEventListener("change", handleModeChange);
+    // Initial check
+    if (isControllerMode()) {
+       setSyncStatus("controller mode");
+    }
   }
 
   if (displayMode) {
@@ -1188,6 +1197,86 @@
       loadRomFromLibrary();
     });
   }
+
+  if (offlineToggle) {
+    offlineToggle.addEventListener("change", () => {
+      if (isOffline()) {
+        if (localReady && !running) {
+          maybeStartSync();
+        }
+      } else {
+        if (running && syncActive) {
+          stopSync("switched to online");
+        }
+      }
+    });
+  }
+
+  if (modeSelect) {
+    modeSelect.addEventListener("change", () => {
+      if (isControllerMode()) {
+        if (syncActive) stopSync("switching to controller mode");
+        if (localReady) startControllerLoop();
+      } else {
+        if (running && !syncActive) stopControllerRun("switching to netplay");
+        if (localReady) maybeStartSync();
+      }
+    });
+  }
+
+  // --- Local Gamepad Support ---
+  let gamepadIndex = null;
+  const gamepadState = {};
+
+  function pollLocalGamepad() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads[gamepadIndex] || pads.find(p => p && p.connected);
+    
+    if (!pad) {
+      gamepadIndex = null;
+      requestAnimationFrame(pollLocalGamepad);
+      return;
+    }
+    gamepadIndex = pad.index;
+
+    // Map Standard Gamepad to NES Inputs
+    // Face buttons: 0=A, 1=B (or inverted preference), etc.
+    // Using standard: 0 -> B, 1 -> A (NES style usually has B left of A)
+    // Actually typical gamepad: 0(A/Cross) -> NES A, 1(B/Circle) -> NES B
+    // Let's stick to simple mapping:
+    const BUTTON_MAP = {
+      0: "A", 1: "B", 
+      8: "SELECT", 9: "START",
+      12: "UP", 13: "DOWN", 14: "LEFT", 15: "RIGHT"
+    };
+
+    Object.entries(BUTTON_MAP).forEach(([idx, nesBtn]) => {
+      const pressed = pad.buttons[idx]?.pressed;
+      if (gamepadState[idx] !== pressed) {
+        gamepadState[idx] = pressed;
+        updateLocalButton(nesBtn, "gamepad", pressed);
+      }
+    });
+
+    // Axes
+    const axisX = pad.axes[0] || 0;
+    const axisY = pad.axes[1] || 0;
+    updateLocalButton("LEFT", "gamepad-axis", axisX < -0.5);
+    updateLocalButton("RIGHT", "gamepad-axis", axisX > 0.5);
+    updateLocalButton("UP", "gamepad-axis", axisY < -0.5);
+    updateLocalButton("DOWN", "gamepad-axis", axisY > 0.5);
+
+    requestAnimationFrame(pollLocalGamepad);
+  }
+
+  window.addEventListener("gamepaddisconnected", () => {
+    gamepadIndex = null;
+    // Release gamepad inputs
+    BUTTON_ORDER.forEach(btn => updateLocalButton(btn, "gamepad", false));
+    BUTTON_ORDER.forEach(btn => updateLocalButton(btn, "gamepad-axis", false));
+  });
+
+  requestAnimationFrame(pollLocalGamepad);
 
   updateOutputSize();
   updateAudioLabel();

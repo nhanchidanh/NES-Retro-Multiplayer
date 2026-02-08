@@ -3,39 +3,71 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NES Retro Multiplayer</title>
+    <title>NES Retro Multiplayer | P2P Retro Gaming</title>
     <link rel="stylesheet" href="styles.css" />
+    <meta name="description" content="Play classic NES games with friends online using Peer-to-Peer technology. No server required, just share your ID and play." />
   </head>
   <body>
     <div class="wrap">
-      <header>
-        <h1>NES Retro Multiplayer</h1>
-        <p>
-          Both sides run jsnes locally and sync only input over a PeerJS data channel.
-          You can load a ROM from your device or pick from the built-in library.
+      <header class="main-header">
+        <div class="logo-area">
+          <div class="pixel-box"></div>
+          <h1>NES RETRO<br><span>MULTIPLAYER</span></h1>
+        </div>
+        <p class="subtitle">
+          Experience zero-latency retro gaming with friends. Both players sync inputs in lockstep using WebRTC. 
+          No streaming lag, just pure 8-bit action.
         </p>
       </header>
 
       <section class="grid">
-        <article class="card">
-          <h3>Host (Player 1)</h3>
-          <p>Run the emulator, load a ROM locally, and sync input in lockstep.</p>
-          <a class="button" href="host.html">Open Host</a>
+        <article class="card host-card">
+          <div class="card-icon">🎮</div>
+          <h3>Host Console</h3>
+          <p>Start the engine, load your favorite ROM, and invite a friend to play.</p>
+          <a class="button" href="host.html">
+            <span>START HOSTING</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </a>
         </article>
-        <article class="card">
-          <h3>Guest (Player 2)</h3>
-          <p>Run the emulator locally and send Player 2 input (keyboard/touch/gamepad).</p>
-          <a class="button" href="guest.html">Open Guest</a>
+
+        <article class="card guest-card">
+          <div class="card-icon">📡</div>
+          <h3>Guest Player</h3>
+          <p>Join a host's session using their Peer ID and take control of Player 2.</p>
+          <a class="button" href="guest.html">
+            <span>JOIN SESSION</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </a>
         </article>
-        <article class="card">
-          <h3>Phone Controller</h3>
-          <p>Use a phone as a gamepad when the host runs the game on a PC.</p>
-          <a class="button" href="controller.html">Open Controller</a>
+
+        <article class="card controller-card">
+          <div class="card-icon">📱</div>
+          <h3>Mobile Gamepad</h3>
+          <p>Turn your smartphone into a wireless NES controller for local or remote play.</p>
+          <a class="button" href="controller.html">
+            <span>OPEN GAMEPAD</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </a>
         </article>
       </section>
 
+      <section class="info-section">
+        <div class="info-card">
+          <h4>How it works</h4>
+          <ul>
+            <li><strong>Peer-to-Peer:</strong> direct connection between players.</li>
+            <li><strong>Input Sync:</strong> we sync buttons, not video, for 0 latency.</li>
+            <li><strong>Privacy:</strong> your ROMs stay on your device.</li>
+          </ul>
+        </div>
+      </section>
+
       <footer>
-        <p>Tip: share the Host Peer ID with the guest (open /guest.html).</p>
+        <p>&copy; 2024 NES Retro Netplay. Built for the retro gaming community.</p>
+        <div class="footer-links">
+          <span>Tip: Both players must load the same ROM file for sync.</span>
+        </div>
       </footer>
     </div>
   </body>

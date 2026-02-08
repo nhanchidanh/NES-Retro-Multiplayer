@@ -3,92 +3,123 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Guest - NES Netplay</title>
+    <title>Guest Console - NES Retro</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="wrap">
-      <header>
-        <h1>Guest Console</h1>
-        <p>Run jsnes locally, connect by Peer ID, and sync input via lockstep.</p>
+      <header class="main-header">
+        <div class="logo-area">
+          <div class="pixel-box"></div>
+          <h1>GUEST<span>CONSOLE</span></h1>
+        </div>
+        <p class="subtitle">Connect to a host session and join the game as Player 2.</p>
       </header>
 
-      <section class="panel">
-        <div class="status">
-          <span class="pill" id="peer-status">Peer: connecting...</span>
-          <span class="pill" id="host-status">Host: not connected</span>
-          <span class="pill" id="rom-status">ROM: none</span>
-          <span class="pill" id="sync-status">Sync: waiting for ROM</span>
-        </div>
-
-        <div class="controls">
-          <label for="host-id">Host Peer ID</label>
-          <div class="inline">
-            <input id="host-id" type="text" placeholder="Paste host ID" autocomplete="off" />
-            <button class="button" id="connect-btn" type="button">Connect</button>
+      <div class="grid">
+        <section class="panel session-panel">
+          <h3>Connection</h3>
+          <div class="status">
+            <span class="pill" id="peer-status">Peer: connecting...</span>
+            <span class="pill" id="host-status">Host: disconnected</span>
           </div>
 
-          <label for="rom-input">Local ROM (.nes)</label>
-          <input id="rom-input" type="file" accept=".nes" />
+          <div class="form-group">
+            <label for="host-id">Host Peer ID</label>
+            <div class="inline">
+              <input id="host-id" type="text" placeholder="Paste host ID here" autocomplete="off" />
+              <button class="button" id="connect-btn" type="button">CONNECT</button>
+            </div>
+          </div>
+        </section>
 
-          <label for="rom-library">ROM library</label>
-          <div class="inline">
-            <select id="rom-library"></select>
-            <button class="button secondary" id="load-library" type="button">Load</button>
+        <section class="panel rom-panel">
+          <h3>ROM Synchronization</h3>
+          <div class="status">
+             <span class="pill" id="rom-status">ROM: none</span>
+             <span class="pill" id="sync-status">Sync: idle</span>
           </div>
 
-          <label for="display-mode">Display</label>
-          <div class="inline">
-            <select id="display-mode">
-              <option value="auto" selected>Auto (pixel perfect)</option>
-              <option value="fit">Fit (smooth)</option>
-              <option value="fill-sharp">Fill (sharp)</option>
-              <option value="fill-smooth">Fill (smooth)</option>
-              <option value="2x">Fixed 2x</option>
-              <option value="3x">Fixed 3x</option>
-              <option value="4x">Fixed 4x</option>
-              <option value="5x">Fixed 5x</option>
-            </select>
+          <div class="form-group">
+            <label for="rom-library">Select Companion ROM</label>
+            <div class="inline">
+              <select id="rom-library"></select>
+              <button class="button secondary" id="load-library" type="button">Load</button>
+            </div>
           </div>
 
-          <label for="audio-toggle">Sound</label>
-          <div class="inline">
-            <input id="audio-toggle" type="checkbox" checked />
-            <span id="audio-label">On</span>
+          <div class="divider"><span>OR</span></div>
+
+          <div class="form-group">
+            <label for="rom-input">Upload Local ROM (.nes)</label>
+            <input id="rom-input" type="file" accept=".nes" />
           </div>
+        </section>
 
-          <span>Player 2 keys: Arrows + Z (A) + X (B) + Enter (Start) + Shift (Select)</span>
-          <span>Gamepad: standard layout supported. Touch controls below for mobile.</span>
-          <span>ROM must match the host exactly. Input delay: 2 frames.</span>
-        </div>
+        <section class="panel settings-panel">
+          <h3>Environment</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="display-mode">Scaling</label>
+              <select id="display-mode">
+                <option value="auto" selected>Auto</option>
+                <option value="fit">Fit</option>
+                <option value="2x">2x</option>
+                <option value="3x">3x</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="audio-toggle">Audio</label>
+              <div class="inline">
+                <input id="audio-toggle" type="checkbox" checked />
+                <span id="audio-label">On</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
 
+      <section class="screen-section">
         <div class="screen-wrap">
           <div class="video-frame" id="video-frame">
             <canvas id="screen" width="256" height="240"></canvas>
             <button class="button secondary fullscreen-btn" id="fullscreen-btn" type="button">
-              Fullscreen
+              [ ] Fullscreen
             </button>
             <div class="touch-overlay">
               <div class="dpad">
-                <div class="joystick-base" id="joystick-base" role="group" aria-label="D-pad joystick">
+                <div class="joystick-base" id="joystick-base">
                   <div class="joystick-knob" id="joystick-knob"></div>
                 </div>
               </div>
               <div class="actions">
                 <div class="action-row">
-                  <button class="control action" data-btn="B" type="button">B</button>
-                  <button class="control action" data-btn="A" type="button">A</button>
+                  <button class="control action action-b" data-btn="B" type="button">B</button>
+                  <button class="control action action-a" data-btn="A" type="button">A</button>
                 </div>
                 <div class="action-row">
                   <button class="control action combo" data-combo="A,B" type="button">A+B</button>
                 </div>
                 <div class="action-row">
-                  <button class="control small" data-btn="SELECT" type="button">Select</button>
-                  <button class="control small" data-btn="START" type="button">Start</button>
+                  <button class="control small" data-btn="SELECT" type="button">SELECT</button>
+                  <button class="control small" data-btn="START" type="button">START</button>
                 </div>
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="help-section">
+        <div class="info-card">
+          <h4>Player 2 Controls</h4>
+          <div class="keyboard-grid">
+            <div class="k-item"><span>ARROWS</span> D-Pad</div>
+            <div class="k-item"><span>Z</span> Button A</div>
+            <div class="k-item"><span>X</span> Button B</div>
+            <div class="k-item"><span>GAMEPAD</span> Supported</div>
+          </div>
+          <p style="margin-top: 16px; font-size: 12px; opacity: 0.7;">Note: Your ROM must match the host's ROM hash exactly for the game to sync.</p>
         </div>
       </section>
     </div>
@@ -98,3 +129,4 @@
     <script src="guest.js" defer></script>
   </body>
 </html>
+
